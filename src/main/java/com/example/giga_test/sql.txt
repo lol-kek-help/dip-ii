@@ -1,0 +1,198 @@
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+
+    username VARCHAR(100) NOT NULL UNIQUE,
+    email VARCHAR(150) UNIQUE,
+
+    full_name VARCHAR(255) NOT NULL,
+
+    password_hash TEXT NOT NULL,
+
+    role_id INTEGER NOT NULL,
+
+    is_active BOOLEAN DEFAULT TRUE,
+
+    timezone VARCHAR(50),
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT fk_users_role
+        FOREIGN KEY (role_id)
+        REFERENCES roles(id)
+        ON DELETE RESTRICT
+);
+
+CREATE TABLE roles (
+    id SERIAL PRIMARY KEY,
+
+    name VARCHAR(50) NOT NULL UNIQUE,
+
+    description TEXT
+);
+
+
+INSERT INTO users (username, email, full_name, password_hash, role_id, timezone)
+VALUES
+('volkov_aa', 'volkovaa@gazprom.ru', 'Волков Алексей Андреевич', 'gazprom_VAA', 1, 'Europe/Moscow'),
+('orlov_dp', 'orlovdp@gazprom.ru', 'Орлов Дмитрий Павлович', 'gazprom_ODP', 2, 'Europe/Yekaterinburg'),
+('sobolev_ai', 'sobolevai@gazprom.ru', 'Соболев Артём Игоревич', 'gazprom_SAI', 3, 'Europe/Moscow');
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id BIGSERIAL PRIMARY KEY,
+    task_number VARCHAR(255),
+    title VARCHAR(255),
+    description VARCHAR(255),
+    status VARCHAR(255),
+    priority VARCHAR(255),
+    category VARCHAR(255),
+    requester_id BIGINT REFERENCES users(id),
+    assigned_to_id BIGINT REFERENCES users(id),
+    created_at TIMESTAMP,
+    resolution_deadline TIMESTAMP,
+    resolution_comment VARCHAR(255)
+);
+-- Добавляем 10 тестовых задач
+INSERT INTO tasks (
+    task_number,
+    title,
+    description,
+    status,
+    priority,
+    category,
+    requester_id,
+    assigned_to_id,
+    created_at,
+    resolution_deadline,
+    resolution_comment
+)
+VALUES
+    (
+        'TASK-001',
+        'Не работает вход в систему',
+        'Пользователь не может авторизоваться после смены пароля.',
+        'NEW',
+        'HIGH',
+        'ACCESS',
+        1,
+        2,
+        NOW() - INTERVAL '2 days',
+        NOW() + INTERVAL '1 day',
+        NULL
+    ),
+    (
+        'TASK-002',
+        'Ошибка при оплате',
+        'При попытке оплатить заказ появляется ошибка банка.',
+        'IN_PROGRESS',
+        'URGENT',
+        'BILLING',
+        2,
+        3,
+        NOW() - INTERVAL '5 days',
+        NOW() + INTERVAL '4 hours',
+        'Проверяется интеграция с платёжным шлюзом.'
+    ),
+    (
+        'TASK-003',
+        'Запрос доступа к отчётам',
+        'Необходимо предоставить доступ к разделу финансовых отчётов.',
+        'ASSIGNED',
+        'MEDIUM',
+        'ACCESS',
+        3,
+        1,
+        NOW() - INTERVAL '1 day',
+        NOW() + INTERVAL '3 days',
+        NULL
+    ),
+    (
+        'TASK-004',
+        'Медленно открывается главная страница',
+        'Главная страница загружается более 10 секунд.',
+        'ESCALATED',
+        'HIGH',
+        'INCIDENT',
+        1,
+        3,
+        NOW() - INTERVAL '7 days',
+        NOW() - INTERVAL '1 day',
+        'Передано команде инфраструктуры.'
+    ),
+    (
+        'TASK-005',
+        'Обновить контактные данные',
+        'Пользователь просит изменить номер телефона в профиле.',
+        'RESOLVED',
+        'LOW',
+        'GENERAL',
+        1,
+        2,
+        NOW() - INTERVAL '10 days',
+        NOW() - INTERVAL '8 days',
+        'Контактные данные обновлены.'
+    ),
+    (
+        'TASK-006',
+        'Не приходит письмо подтверждения',
+        'После регистрации письмо подтверждения не приходит на почту.',
+        'PENDING_USER',
+        'MEDIUM',
+        'INCIDENT',
+        1,
+        3,
+        NOW() - INTERVAL '3 days',
+        NOW() + INTERVAL '2 days',
+        'Ожидаем подтверждение email от пользователя.'
+    ),
+    (
+        'TASK-007',
+        'Закрыть старую учётную запись',
+        'Пользователь просит деактивировать старый аккаунт.',
+        'CLOSED',
+        'LOW',
+        'ACCESS',
+        2,
+        1,
+        NOW() - INTERVAL '20 days',
+        NOW() - INTERVAL '15 days',
+        'Учётная запись закрыта.'
+    ),
+    (
+        'TASK-008',
+        'Некорректная сумма в счёте',
+        'В выставленном счёте указана неверная итоговая сумма.',
+        'RETURNED',
+        'HIGH',
+        'BILLING',
+        3,
+        2,
+        NOW() - INTERVAL '6 days',
+        NOW() + INTERVAL '1 day',
+        'Задача возвращена на уточнение данных по счёту.'
+    ),
+    (
+        'TASK-009',
+        'Добавить новую категорию товаров',
+        'Нужно добавить категорию товаров в административной панели.',
+        'UNASSIGNED',
+        'MEDIUM',
+        'GENERAL',
+        1,
+        NULL,
+        NOW() - INTERVAL '12 hours',
+        NOW() + INTERVAL '5 days',
+        NULL
+    ),
+    (
+        'TASK-010',
+        'Сбой при загрузке файла',
+        'При загрузке PDF-файла появляется ошибка сервера.',
+        'NEW',
+        'URGENT',
+        'INCIDENT',
+        1,
+        3,
+        NOW() - INTERVAL '1 hour',
+        NOW() + INTERVAL '8 hours',
+        NULL
+    );
