@@ -1,88 +1,117 @@
 package com.example.giga_test;
 
+import jakarta.persistence.EntityNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.NoSuchElementException;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.*;
+
 
 @Service
 public class TaskService {
+    private static final Logger log = LoggerFactory.getLogger(TaskService.class);
+
 
     private final Map<Long, Task> taskMap;
-    private final AtomicLong idCounter;
     private final TaskRepository repository;
     public TaskService(TaskRepository repository) {
         this.repository = repository;
         taskMap = new HashMap<>();
-        idCounter = new AtomicLong();
     }
 
-    public List<Task> findAllTask() {
+    public List<Task> findAllTask() { //переписано для бд
         List<TaskEntity> allEntitys = repository.findAll();
         return allEntitys.stream()
-                .map(entity -> {
-                    Task task = new Task();
-                    BeanUtils.copyProperties(entity, task);
-                    return task;
-                })
+                .map(this::toTask)
                 .toList();
 
     }
 
-    public Task getTaskByID(
+    public Task getTaskByID(//переписано для бд
             Long id
     ) {
-        if (!taskMap.containsKey(id)){
-            throw new NoSuchElementException("No that id = " + id);
-        }
-        return taskMap.get(id);
+        TaskEntity taskEntity = repository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "No that id = " + id
+                ));
+
+        return toTask(taskEntity);
     }
 
-    public Task createTask(Task taskToCreate) {
-        Task newTask = taskToCreate.toBuilder()
-                .id(idCounter.incrementAndGet())
-                .build();
-        taskMap.put(newTask.getId(), newTask);
-        return newTask;
+    public Task createTask(Task taskToCreate) {//переписано для бд
+        TaskEntity entityToSave = toEntity(taskToCreate);
+        entityToSave.setId(null);
+
+        TaskEntity savedEntity = repository.save(entityToSave);
+        return toTask(savedEntity);
+    }
+
+    private Task toTask(TaskEntity entity) {
+        Task task = new Task();
+        BeanUtils.copyProperties(entity, task);
+        task.setDescriprion(entity.getDescription());
+        return task;
+    }
+
+    private TaskEntity toEntity(Task task) {
+        TaskEntity entity = new TaskEntity();
+        BeanUtils.copyProperties(task, entity);
+        entity.setDescription(task.getDescriprion());
+        return entity;
     }
 
     public Task updateTask(Long id, Task taskToUpdate) {
-        if (!taskMap.containsKey(id)){
-            throw new NoSuchElementException("No that id = " + id);
+        TaskEntity taskEntity = repository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "No that id = " + id
+                ));
+        if(taskEntity.getStatus() == Status.CLOSED){
+            throw new IllegalStateException("Cannot modify" + taskEntity.getStatus());
         }
-        var task = taskMap.get(id);
-        if(task.status == Status.CLOSED){
-            throw new IllegalStateException("Cannot modify" + task.status);
-        }
-        Task updatetTask = taskToUpdate.toBuilder().build();
-        taskMap.put(updatetTask.getId(), updatetTask);
-        return updatetTask;
-    }
+        TaskEntity entityToUpdate = toEntity(taskToUpdate);
+        entityToUpdate.setId(id);
 
-    public void deleteTask(Long id) {
-        if (!taskMap.containsKey(id)){
-            throw new NoSuchElementException("No that id = " + id);
+        TaskEntity updatedEntity = repository.save(entityToUpdate);
+        return toTask(updatedEntity);
+    }
+    @Transactional
+    public void cancelTask(Long id) {
+        if (!repository.existsById(id)){
+            throw new EntityNotFoundException("No that id = " + id);
         }
-        taskMap.remove(id);
+        repository.setStatus(id, Status.CANCELED);
+        log.info("Success cancel task id: " + id);
     }
 
     public Task aiProcessingTask(Long id) {
-        if (!taskMap.containsKey(id)){
-            throw new NoSuchElementException("No that id = " + id);
+        TaskEntity taskEntity = repository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "No that id = " + id
+                ));
+        if(taskEntity.getStatus() == Status.CLOSED){
+            throw new IllegalStateException
+                    ("Cannot approve" + taskEntity.getStatus());
         }
-        var task = taskMap.get(id);
-        if(task.status == Status.CLOSED){
-            throw new IllegalStateException("Cannot approve" + task.status);
-        }
-        task = sendToAI(task);
-        return null;
+        Task processedTask = sendToAI(toTask(taskEntity));
+
+        TaskEntity entityToSave = toEntity(processedTask);
+        entityToSave.setId(taskEntity.getId());
+
+        TaskEntity savedEntity = repository.save(entityToSave);
+        return toTask(savedEntity);
     }
-    private Task sendToAI (Task task){ //TODO: AI
-        task.setCategory(Category.INCIDENT);
-        return task;
+    private Task sendToAI(Task task) { //TODO: AI
+        // 1. Собрать prompt из task.title, task.description, task.priority
+        // 2. Отправить prompt в GigaChat
+        // 3. Получить ответ
+        // 4. На основании ответа изменить category/status/resolutionComment
+        // 5. Вернуть обновленный Task
+        return task.toBuilder()
+                .category(Category.INCIDENT)
+                .build();
     }
+
 }

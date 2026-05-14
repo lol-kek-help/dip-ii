@@ -9,5 +9,6 @@ public enum Status {
     ESCALATED,
     RETURNED,
     RESOLVED,
-    CLOSED
+    CLOSED,
+    CANCELED
 }

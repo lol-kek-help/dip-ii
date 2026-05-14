@@ -41,7 +41,7 @@ public class TaskController {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(taskService.createTask(taskToCreate));
     }
-    @PutMapping("/{id}")
+    @PutMapping("/{id}/update")
     public ResponseEntity<Task> updateTask(
             @PathVariable("id") Long id,
             @RequestBody Task taskToUpdate
@@ -50,13 +50,13 @@ public class TaskController {
         var updated = taskService.updateTask(id, taskToUpdate);
         return ResponseEntity.ok(updated);
     }
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteTask(
+    @DeleteMapping("/{id}/cancel")
+    public ResponseEntity<Void> cancelTask(
             @PathVariable("id") Long id
     ) {
-        log.info("delete Task " + id);
+        log.info("cancel Task " + id);
         try {
-            taskService.deleteTask(id);
+            taskService.cancelTask(id);
             return ResponseEntity.ok().build();
         } catch (NoSuchElementException e) {
             return ResponseEntity.notFound().build();
