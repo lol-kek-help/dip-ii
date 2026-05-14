@@ -1,5 +1,6 @@
 package com.example.giga_test;
 
+import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
@@ -10,16 +11,26 @@ import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 public class TaskService {
+
     private final Map<Long, Task> taskMap;
     private final AtomicLong idCounter;
-
-    public TaskService() {
+    private final TaskRepository repository;
+    public TaskService(TaskRepository repository) {
+        this.repository = repository;
         taskMap = new HashMap<>();
         idCounter = new AtomicLong();
     }
 
     public List<Task> findAllTask() {
-        return taskMap.values().stream().toList();
+        List<TaskEntity> allEntitys = repository.findAll();
+        return allEntitys.stream()
+                .map(entity -> {
+                    Task task = new Task();
+                    BeanUtils.copyProperties(entity, task);
+                    return task;
+                })
+                .toList();
+
     }
 
     public Task getTaskByID(
