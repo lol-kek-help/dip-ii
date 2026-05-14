@@ -55,12 +55,9 @@ public class TaskController {
             @PathVariable("id") Long id
     ) {
         log.info("cancel Task " + id);
-        try {
-            taskService.cancelTask(id);
-            return ResponseEntity.ok().build();
-        } catch (NoSuchElementException e) {
-            return ResponseEntity.notFound().build();
-        }
+        taskService.cancelTask(id);
+        return ResponseEntity.ok().build();
+
 
     }
     @PostMapping("/{id}/ai-processing")
