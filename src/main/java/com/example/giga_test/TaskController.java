@@ -1,5 +1,6 @@
 package com.example.giga_test;
 
+import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -35,7 +36,7 @@ public class TaskController {
     }
     @PostMapping("/new-task")
     public ResponseEntity<Task> createTask (
-            @RequestBody Task taskToCreate
+            @RequestBody @Valid Task taskToCreate
     ){
         log.info("new Task");
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -44,7 +45,7 @@ public class TaskController {
     @PutMapping("/{id}/update")
     public ResponseEntity<Task> updateTask(
             @PathVariable("id") Long id,
-            @RequestBody Task taskToUpdate
+            @RequestBody @Valid Task taskToUpdate
     ) {
         log.info("called updateTask " + id);
         var updated = taskService.updateTask(id, taskToUpdate);

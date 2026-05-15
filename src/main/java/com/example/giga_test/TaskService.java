@@ -42,25 +42,16 @@ public class TaskService {
     }
 
     public Task createTask(Task taskToCreate) {//переписано для бд
+        if (!taskToCreate.getResolutionDeadline().isAfter(
+                taskToCreate.getCreatedAt()
+        )){
+            throw new IllegalArgumentException("До дедлайна минимум должен быть 1 день");
+        }
         TaskEntity entityToSave = toEntity(taskToCreate);
         entityToSave.setId(null);
 
         TaskEntity savedEntity = repository.save(entityToSave);
         return toTask(savedEntity);
-    }
-
-    private Task toTask(TaskEntity entity) {
-        Task task = new Task();
-        BeanUtils.copyProperties(entity, task);
-        task.setDescriprion(entity.getDescription());
-        return task;
-    }
-
-    private TaskEntity toEntity(Task task) {
-        TaskEntity entity = new TaskEntity();
-        BeanUtils.copyProperties(task, entity);
-        entity.setDescription(task.getDescriprion());
-        return entity;
     }
 
     public Task updateTask(Long id, Task taskToUpdate) {
@@ -71,6 +62,11 @@ public class TaskService {
         if(taskEntity.getStatus() == Status.CLOSED){
             throw new IllegalStateException("Cannot modify" + taskEntity.getStatus());
         }
+        if (!taskToUpdate.getResolutionDeadline().isAfter(
+                taskToUpdate.getCreatedAt()
+        )){
+            throw new IllegalArgumentException("До дедлайна минимум должен быть 1 день");
+        }
         TaskEntity entityToUpdate = toEntity(taskToUpdate);
         entityToUpdate.setId(id);
 
@@ -79,8 +75,15 @@ public class TaskService {
     }
     @Transactional
     public void cancelTask(Long id) {
-        if (!repository.existsById(id)){
-            throw new EntityNotFoundException("No that id = " + id);
+        TaskEntity taskEntity = repository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "No that id = " + id
+                ));
+        if (taskEntity.getStatus().equals(Status.CLOSED) ||
+                taskEntity.getStatus().equals(Status.CANCELED) ||
+                taskEntity.getStatus().equals(Status.RESOLVED)
+        ){
+            throw new IllegalStateException("Нельзя отменить задачу со статусом " + taskEntity.getStatus());
         }
         repository.setStatus(id, Status.CANCELED);
         log.info("Success cancel task id: " + id);
@@ -113,5 +116,17 @@ public class TaskService {
                 .category(Category.INCIDENT)
                 .build();
     }
+    private Task toTask(TaskEntity entity) {
+        Task task = new Task();
+        BeanUtils.copyProperties(entity, task);
+        task.setDescriprion(entity.getDescription());
+        return task;
+    }
 
+    private TaskEntity toEntity(Task task) {
+        TaskEntity entity = new TaskEntity();
+        BeanUtils.copyProperties(task, entity);
+        entity.setDescription(task.getDescriprion());
+        return entity;
+    }
 }
