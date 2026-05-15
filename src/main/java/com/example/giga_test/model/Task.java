@@ -1,4 +1,4 @@
-package com.example.giga_test;
+package com.example.giga_test.model;
 
 import jakarta.validation.constraints.FutureOrPresent;
 import jakarta.validation.constraints.NotNull;

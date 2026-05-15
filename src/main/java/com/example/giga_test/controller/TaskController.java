@@ -1,5 +1,8 @@
-package com.example.giga_test;
+package com.example.giga_test.controller;
 
+import com.example.giga_test.model.Task;
+import com.example.giga_test.service.TaskSearchFilter;
+import com.example.giga_test.service.TaskService;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,7 +11,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/task")
@@ -28,11 +30,26 @@ public class TaskController {
         log.info("called getTaskByID " + id);
         return ResponseEntity.ok(taskService.getTaskByID(id));
     }
-
-    @GetMapping("/")
+    @GetMapping("/all")
     public ResponseEntity<List<Task>> getAllTask() {
         log.info("called getAllTask");
         return ResponseEntity.ok(taskService.findAllTask());
+    }
+    @GetMapping("/")
+    public ResponseEntity<List<Task>> getTaskByFilter(
+            @RequestParam (name = "assignedTo", required = false) Long assignedTo,
+            @RequestParam (name = "requester", required = false) Long requester,
+            @RequestParam (name = "pageSize", required = false) Integer pageSize,
+            @RequestParam (name = "pageNumber", required = false) Integer pageNumber
+    ) {
+        log.info("called getTaskByFilter");
+        var filter = new TaskSearchFilter(
+                assignedTo,
+                requester,
+                pageSize,
+                pageNumber
+        );
+        return ResponseEntity.ok(taskService.searchTaskByFilter(filter));
     }
     @PostMapping("/new-task")
     public ResponseEntity<Task> createTask (

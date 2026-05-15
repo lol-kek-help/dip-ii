@@ -1,5 +1,9 @@
-package com.example.giga_test;
+package com.example.giga_test.entity;
 
+import com.example.giga_test.model.Category;
+import com.example.giga_test.model.Priority;
+import com.example.giga_test.model.Status;
+import com.example.giga_test.model.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;

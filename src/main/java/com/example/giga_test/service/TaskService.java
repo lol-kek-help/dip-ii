@@ -1,9 +1,16 @@
-package com.example.giga_test;
+package com.example.giga_test.service;
 
+import com.example.giga_test.entity.TaskEntity;
+import com.example.giga_test.mapper.TaskMapper;
+import com.example.giga_test.model.Category;
+import com.example.giga_test.model.Status;
+import com.example.giga_test.model.Task;
+import com.example.giga_test.repository.TaskRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.BeanUtils;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -13,19 +20,35 @@ import java.util.*;
 @Service
 public class TaskService {
     private static final Logger log = LoggerFactory.getLogger(TaskService.class);
-
-
-    private final Map<Long, Task> taskMap;
+    private final TaskMapper mapper;
     private final TaskRepository repository;
-    public TaskService(TaskRepository repository) {
+    public TaskService(TaskMapper mapper, TaskRepository repository) {
+        this.mapper = mapper;
         this.repository = repository;
-        taskMap = new HashMap<>();
     }
 
+    public List<Task> searchTaskByFilter(
+            TaskSearchFilter filter
+    ) {
+        int pageSize = filter.pageSize() != null
+                ? filter.pageSize() : 10;
+        int pageNumber = filter.pageNumber() != null
+                ? filter.pageNumber() : 0;
+        var pageable = Pageable.ofSize(pageSize).withPage(pageNumber);
+        Page<TaskEntity> allEntitys = repository.searchByFilter(
+                filter.requester(),
+                filter.assignedTo(),
+                pageable
+        );
+        return allEntitys.stream()
+                .map(mapper::entityToTask)
+                .toList();
+
+    }
     public List<Task> findAllTask() { //переписано для бд
         List<TaskEntity> allEntitys = repository.findAll();
         return allEntitys.stream()
-                .map(this::toTask)
+                .map(mapper::entityToTask)
                 .toList();
 
     }
@@ -38,7 +61,7 @@ public class TaskService {
                         "No that id = " + id
                 ));
 
-        return toTask(taskEntity);
+        return mapper.entityToTask(taskEntity);
     }
 
     public Task createTask(Task taskToCreate) {//переписано для бд
@@ -47,11 +70,11 @@ public class TaskService {
         )){
             throw new IllegalArgumentException("До дедлайна минимум должен быть 1 день");
         }
-        TaskEntity entityToSave = toEntity(taskToCreate);
+        TaskEntity entityToSave = mapper.taskToEntity(taskToCreate);
         entityToSave.setId(null);
 
         TaskEntity savedEntity = repository.save(entityToSave);
-        return toTask(savedEntity);
+        return mapper.entityToTask(savedEntity);
     }
 
     public Task updateTask(Long id, Task taskToUpdate) {
@@ -67,11 +90,11 @@ public class TaskService {
         )){
             throw new IllegalArgumentException("До дедлайна минимум должен быть 1 день");
         }
-        TaskEntity entityToUpdate = toEntity(taskToUpdate);
+        TaskEntity entityToUpdate = mapper.taskToEntity(taskToUpdate);
         entityToUpdate.setId(id);
 
         TaskEntity updatedEntity = repository.save(entityToUpdate);
-        return toTask(updatedEntity);
+        return mapper.entityToTask(updatedEntity);
     }
     @Transactional
     public void cancelTask(Long id) {
@@ -98,13 +121,13 @@ public class TaskService {
             throw new IllegalStateException
                     ("Cannot approve" + taskEntity.getStatus());
         }
-        Task processedTask = sendToAI(toTask(taskEntity));
+        Task processedTask = sendToAI(mapper.entityToTask(taskEntity));
 
-        TaskEntity entityToSave = toEntity(processedTask);
+        TaskEntity entityToSave = mapper.taskToEntity(processedTask);
         entityToSave.setId(taskEntity.getId());
 
         TaskEntity savedEntity = repository.save(entityToSave);
-        return toTask(savedEntity);
+        return mapper.entityToTask(savedEntity);
     }
     private Task sendToAI(Task task) { //TODO: AI
         // 1. Собрать prompt из task.title, task.description, task.priority
@@ -116,17 +139,5 @@ public class TaskService {
                 .category(Category.INCIDENT)
                 .build();
     }
-    private Task toTask(TaskEntity entity) {
-        Task task = new Task();
-        BeanUtils.copyProperties(entity, task);
-        task.setDescriprion(entity.getDescription());
-        return task;
-    }
 
-    private TaskEntity toEntity(Task task) {
-        TaskEntity entity = new TaskEntity();
-        BeanUtils.copyProperties(task, entity);
-        entity.setDescription(task.getDescriprion());
-        return entity;
-    }
 }

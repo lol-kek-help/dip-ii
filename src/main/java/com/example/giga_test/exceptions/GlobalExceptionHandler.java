@@ -1,4 +1,4 @@
-package com.example.giga_test;
+package com.example.giga_test.exceptions;
 
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;

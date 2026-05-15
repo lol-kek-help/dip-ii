@@ -1,4 +1,4 @@
-package com.example.giga_test;
+package com.example.giga_test.model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
