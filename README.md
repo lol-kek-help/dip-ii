@@ -1,6 +1,12 @@
 # Система поддержки пользователей (backend)
-
-## Запуск
+## Генерация JWT_SECRET
+```bash
+[Convert]::ToBase64String((1..64 | ForEach-Object {Get-Random -Maximum 256}))
+```
+## Запуск (нужно добавить переменные среды)
+```bash
+docker compose up -d 
+```
 ```bash
 docker compose up -d postgres
 ./mvnw spring-boot:run
@@ -24,7 +30,7 @@ docker compose up -d postgres
 - `JWT_SECRET`, `JWT_EXPIRATION_SECONDS`
 
 
-## Переменные окружения для реального GigaChat
+## Переменные окружения для GigaChat
 - `AI_LLM_ENABLED=true` — включить реальный HTTP-клиент GigaChat.
 - `GIGACHAT_AUTH_KEY=<ваш_auth_key>` — ключ для OAuth-обмена (Basic) и автоматического получения access token.
 - `GIGACHAT_API_URL` (опционально) — URL API chat/completions.
