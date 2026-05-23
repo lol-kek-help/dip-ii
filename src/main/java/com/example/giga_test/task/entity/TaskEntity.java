@@ -1,4 +1,4 @@
-package com.example.giga_test.entity;
+package com.example.giga_test.task.entity;
 
 import com.example.giga_test.model.Category;
 import com.example.giga_test.model.Priority;

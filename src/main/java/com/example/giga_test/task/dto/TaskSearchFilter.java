@@ -1,4 +1,4 @@
-package com.example.giga_test.service;
+package com.example.giga_test.task.dto;
 
 public record TaskSearchFilter(
         Long assignedTo,
