@@ -8,6 +8,7 @@
 docker compose up -d 
 ```
 ```bash
+docker compose up -d postgres
 ./mvnw spring-boot:run
 ```
 
@@ -27,3 +28,13 @@ docker compose up -d
 ## Переменные окружения
 - `DB_URL`, `DB_USER`, `DB_PASSWORD`
 - `JWT_SECRET`, `JWT_EXPIRATION_SECONDS`
+
+
+## Переменные окружения для реального GigaChat
+- `AI_LLM_ENABLED=true` — включить реальный HTTP-клиент GigaChat.
+- `GIGACHAT_ACCESS_TOKEN=<ваш_access_token>` — access token для заголовка `Authorization: Bearer ...`.
+- `GIGACHAT_API_URL` (опционально) — URL API chat/completions.
+- `GIGACHAT_MODEL` (опционально, по умолчанию `GigaChat-Pro`).
+- `GIGACHAT_TEMPERATURE` (опционально, по умолчанию `0.2`).
+
+Если `AI_LLM_ENABLED=false` (или не задано), используется деградированный `FallbackLlmClient`.
