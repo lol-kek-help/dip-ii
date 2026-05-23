@@ -2,7 +2,10 @@
 
 ## Запуск
 ```bash
-docker compose up -d postgres
+docker compose up -d 
+set -a
+source .env
+set +a
 ./mvnw spring-boot:run
 ```
 
