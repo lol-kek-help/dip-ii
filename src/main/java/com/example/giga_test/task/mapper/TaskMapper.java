@@ -1,6 +1,6 @@
-package com.example.giga_test.mapper;
+package com.example.giga_test.task.mapper;
 
-import com.example.giga_test.entity.TaskEntity;
+import com.example.giga_test.task.entity.TaskEntity;
 import com.example.giga_test.model.Task;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Component;
