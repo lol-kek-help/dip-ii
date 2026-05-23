@@ -1,7 +1,6 @@
 package com.example.giga_test.auth.controller;
 
-import com.example.giga_test.auth.dto.AuthRequest;
-import com.example.giga_test.auth.dto.AuthResponse;
+import com.example.giga_test.auth.dto.*;
 import com.example.giga_test.auth.service.AuthService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -15,13 +14,18 @@ public class AuthController {
     public AuthController(AuthService authService) {this.authService = authService;}
 
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(@RequestBody @Valid AuthRequest request) {
+    public ResponseEntity<AuthTokenResponse> login(@RequestBody @Valid AuthRequest request) {
         return ResponseEntity.ok(authService.login(request));
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout() {return ResponseEntity.ok().build();}
+    public ResponseEntity<Void> logout(@RequestBody @Valid LogoutRequest request) {
+        authService.logout(request);
+        return ResponseEntity.noContent().build();
+    }
 
     @PostMapping("/refresh")
-    public ResponseEntity<AuthResponse> refresh(@RequestBody @Valid AuthRequest request) {return ResponseEntity.ok(authService.login(request));}
+    public ResponseEntity<AuthTokenResponse> refresh(@RequestBody @Valid RefreshTokenRequest request) {
+        return ResponseEntity.ok(authService.refresh(request));
+    }
 }

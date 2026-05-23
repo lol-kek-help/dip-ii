@@ -16,50 +16,30 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ErrorResponseDto> handleGeneralException(
-            Exception e
-    ){
+    public ResponseEntity<ErrorResponseDto> handleGeneralException(Exception e){
         log.error("Handle exception", e);
-        var errorDto = new ErrorResponseDto(
-                "Внутренняя ошибка сервера",
-                e.getMessage(),
-                LocalDateTime.now()
-        );
-        return ResponseEntity
-                .status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(errorDto);
-    }
-    @ExceptionHandler(EntityNotFoundException.class)
-    public ResponseEntity<ErrorResponseDto> handleEntityNotFound(
-            EntityNotFoundException e
-    ){
-        log.error("Handle EntityNotFoundException", e);
-        var errorDto = new ErrorResponseDto(
-                "Сущность не найдена",
-                e.getMessage(),
-                LocalDateTime.now()
-        );
-        return ResponseEntity
-                .status(HttpStatus.NOT_FOUND)
-                .body(errorDto);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new ErrorResponseDto("INTERNAL_ERROR", "Внутренняя ошибка сервера", e.getMessage(), LocalDateTime.now()));
     }
 
-    @ExceptionHandler( exception = {
-            IllegalArgumentException.class,
-            IllegalStateException.class,
-            MethodArgumentNotValidException.class
-    })
-    public ResponseEntity<ErrorResponseDto> handleBadRequest(
-            Exception e
-    ){
-        log.error("Handle BadRequest", e);
-        var errorDto = new ErrorResponseDto(
-                "Неверный запрос",
-                e.getMessage(),
-                LocalDateTime.now()
-        );
-        return ResponseEntity
-                .status(HttpStatus.BAD_REQUEST)
-                .body(errorDto);
+    @ExceptionHandler(EntityNotFoundException.class)
+    public ResponseEntity<ErrorResponseDto> handleEntityNotFound(EntityNotFoundException e){
+        log.warn("Entity not found", e);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ErrorResponseDto("NOT_FOUND", "Сущность не найдена", e.getMessage(), LocalDateTime.now()));
+    }
+
+    @ExceptionHandler(AuthException.class)
+    public ResponseEntity<ErrorResponseDto> handleAuthException(AuthException e){
+        log.warn("Auth error", e);
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(new ErrorResponseDto("UNAUTHORIZED", "Ошибка аутентификации", e.getMessage(), LocalDateTime.now()));
+    }
+
+    @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class, MethodArgumentNotValidException.class})
+    public ResponseEntity<ErrorResponseDto> handleBadRequest(Exception e){
+        log.warn("Bad request", e);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponseDto("BAD_REQUEST", "Неверный запрос", e.getMessage(), LocalDateTime.now()));
     }
 }
