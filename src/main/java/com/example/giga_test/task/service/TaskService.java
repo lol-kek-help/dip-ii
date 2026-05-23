@@ -1,11 +1,12 @@
-package com.example.giga_test.service;
+package com.example.giga_test.task.service;
 
-import com.example.giga_test.entity.TaskEntity;
-import com.example.giga_test.mapper.TaskMapper;
+import com.example.giga_test.task.dto.TaskSearchFilter;
+import com.example.giga_test.task.entity.TaskEntity;
+import com.example.giga_test.task.mapper.TaskMapper;
 import com.example.giga_test.model.Category;
 import com.example.giga_test.model.Status;
 import com.example.giga_test.model.Task;
-import com.example.giga_test.repository.TaskRepository;
+import com.example.giga_test.task.repository.TaskRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

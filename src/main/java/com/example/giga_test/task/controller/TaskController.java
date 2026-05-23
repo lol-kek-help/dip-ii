@@ -1,8 +1,8 @@
-package com.example.giga_test.controller;
+package com.example.giga_test.task.controller;
 
 import com.example.giga_test.model.Task;
-import com.example.giga_test.service.TaskSearchFilter;
-import com.example.giga_test.service.TaskService;
+import com.example.giga_test.task.dto.TaskSearchFilter;
+import com.example.giga_test.task.service.TaskService;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
