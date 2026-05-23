@@ -1,6 +1,12 @@
 # Система поддержки пользователей (backend)
-
-## Запуск
+## Генерация JWT_SECRET
+```bash
+[Convert]::ToBase64String((1..64 | ForEach-Object {Get-Random -Maximum 256}))
+```
+## Запуск (нужно добавить переменные среды)
+```bash
+docker compose up -d 
+```
 ```bash
 docker compose up -d postgres
 ./mvnw spring-boot:run
