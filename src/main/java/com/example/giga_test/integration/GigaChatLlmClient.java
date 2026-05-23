@@ -30,6 +30,7 @@ public class GigaChatLlmClient implements LlmClient {
     private final RestTemplate restTemplate;
     private final String apiUrl;
     private final String authUrl;
+    private final String embeddingsUrl;
     private final String authKey;
     private final String scope;
     private final String model;
@@ -41,6 +42,7 @@ public class GigaChatLlmClient implements LlmClient {
     public GigaChatLlmClient(
             @Value("${ai.llm.gigachat.api-url:https://gigachat.devices.sberbank.ru/api/v1/chat/completions}") String apiUrl,
             @Value("${ai.llm.gigachat.auth-url:https://ngw.devices.sberbank.ru:9443/api/v2/oauth}") String authUrl,
+            @Value("${ai.llm.gigachat.embeddings-url:https://gigachat.devices.sberbank.ru/api/v1/embeddings}") String embeddingsUrl,
             @Value("${ai.llm.gigachat.auth-key:}") String authKey,
             @Value("${ai.llm.gigachat.scope:GIGACHAT_API_PERS}") String scope,
             @Value("${ai.llm.gigachat.model:GigaChat-Pro}") String model,
@@ -48,10 +50,36 @@ public class GigaChatLlmClient implements LlmClient {
         this.restTemplate = new RestTemplate();
         this.apiUrl = apiUrl;
         this.authUrl = authUrl;
+        this.embeddingsUrl = embeddingsUrl;
         this.authKey = authKey;
         this.scope = scope;
         this.model = model;
         this.temperature = temperature;
+    }
+
+    @Override
+    public double[] embed(String text) {
+        if (authKey == null || authKey.isBlank()) {
+            return new double[0];
+        }
+        try {
+            String accessToken = getOrRefreshAccessToken();
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(accessToken);
+
+            Map<String, Object> body = Map.of(
+                    "model", model,
+                    "input", List.of(text)
+            );
+
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+            ResponseEntity<Map> response = restTemplate.exchange(embeddingsUrl, HttpMethod.POST, request, Map.class);
+            return extractEmbedding(response.getBody());
+        } catch (RestClientException ex) {
+            log.warn("Не удалось получить embedding из GigaChat, используем локальный fallback", ex);
+            return new double[0];
+        }
     }
 
     @Override
@@ -164,5 +192,21 @@ public class GigaChatLlmClient implements LlmClient {
 
         Object content = messageMap.get("content");
         return content == null ? "AI returned empty message." : content.toString();
+    }
+
+    private double[] extractEmbedding(Map<?, ?> body) {
+        if (body == null) return new double[0];
+        Object dataObj = body.get("data");
+        if (!(dataObj instanceof List<?> data) || data.isEmpty()) return new double[0];
+        Object first = data.get(0);
+        if (!(first instanceof Map<?, ?> firstMap)) return new double[0];
+        Object embObj = firstMap.get("embedding");
+        if (!(embObj instanceof List<?> embList) || embList.isEmpty()) return new double[0];
+        double[] vec = new double[embList.size()];
+        for (int i = 0; i < embList.size(); i++) {
+            Object v = embList.get(i);
+            if (v instanceof Number n) vec[i] = n.doubleValue();
+        }
+        return vec;
     }
 }

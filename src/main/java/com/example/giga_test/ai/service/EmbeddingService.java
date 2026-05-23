@@ -1,6 +1,7 @@
 package com.example.giga_test.ai.service;
 
 import com.example.giga_test.ai.entity.VectorRecord;
+import com.example.giga_test.integration.LlmClient;
 import com.example.giga_test.ai.repository.VectorRecordRepository;
 import com.example.giga_test.task.entity.TaskEntity;
 import org.springframework.stereotype.Service;
@@ -13,9 +14,11 @@ public class EmbeddingService {
 
     private static final int DIM = 128;
     private final VectorRecordRepository vectorRecordRepository;
+    private final LlmClient llmClient;
 
-    public EmbeddingService(VectorRecordRepository vectorRecordRepository) {
+    public EmbeddingService(VectorRecordRepository vectorRecordRepository, LlmClient llmClient) {
         this.vectorRecordRepository = vectorRecordRepository;
+        this.llmClient = llmClient;
     }
 
     public void upsertTaskEmbedding(TaskEntity taskEntity) {
@@ -46,6 +49,11 @@ public class EmbeddingService {
     }
 
     public double[] embed(String text) {
+        double[] real = llmClient.embed(text);
+        if (real != null && real.length > 0) {
+            return real;
+        }
+
         double[] vec = new double[DIM];
         String[] tokens = text.toLowerCase(Locale.ROOT).split("\\s+");
         for (String token : tokens) {

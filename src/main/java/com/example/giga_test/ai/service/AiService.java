@@ -28,7 +28,16 @@ public class AiService {
         String lc = text.toLowerCase();
         String category = lc.contains("доступ") ? "ACCESS" : lc.contains("инцид") ? "INCIDENT" : "GENERAL";
         String priority = lc.contains("крит") || lc.contains("простой") ? "URGENT" : "MEDIUM";
-        return new ClassifyResponse(category, priority, llmClient.ask("Classify: "+text));
+        String llmRaw = llmClient.ask("Верни JSON с полями category и priority для обращения: " + text);
+        String llmCategory = extractJsonField(llmRaw, "category");
+        String llmPriority = extractJsonField(llmRaw, "priority");
+        if (llmCategory != null && !llmCategory.isBlank()) {
+            category = llmCategory.toUpperCase(Locale.ROOT);
+        }
+        if (llmPriority != null && !llmPriority.isBlank()) {
+            priority = llmPriority.toUpperCase(Locale.ROOT);
+        }
+        return new ClassifyResponse(category, priority, llmRaw);
     }
 
     public SimilarResponse similar(String text) {
@@ -58,7 +67,7 @@ public class AiService {
         var sim = similar(text);
         String ragPrompt = buildRagPrompt(text, sim);
         return new RecommendResponse(llmClient.ask(ragPrompt),
-                List.of("Проверить похожие кейсы: "+sim.resolvedCases().size(), "Проверить права доступа", "Подтвердить SLA и эскалацию"));
+                List.of("Проверить похожие кейсы: "+sim.resolvedCases().size(), "Определить маршрутизацию на 2-ю линию", "Подтвердить SLA и эскалацию"));
     }
 
     private double score(String a, String b) {
@@ -90,8 +99,21 @@ public class AiService {
         sim.resolvedCases().forEach(c -> sb.append("- ").append(c.title()).append(" [").append(c.fitPercent()).append("%]: ").append(c.resolutionComment()).append("\n"));
         sb.append("\nРелевантные статьи БЗ:\n");
         sim.articles().forEach(a -> sb.append("- ").append(a).append("\n"));
-        sb.append("\nОтвет должен ссылаться на применимые кейсы и шаги диагностики.");
+        sb.append("\nДополнительно верни маршрутизацию (очередь/группа) и первые 3 действия.");
         return sb.toString();
     }
-}
 
+    private String extractJsonField(String json, String field) {
+        if (json == null) return null;
+        String pattern = "\"" + field + "\"";
+        int idx = json.toLowerCase(Locale.ROOT).indexOf(pattern.toLowerCase(Locale.ROOT));
+        if (idx < 0) return null;
+        int colon = json.indexOf(':', idx);
+        if (colon < 0) return null;
+        int q1 = json.indexOf('"', colon + 1);
+        if (q1 < 0) return null;
+        int q2 = json.indexOf('"', q1 + 1);
+        if (q2 < 0) return null;
+        return json.substring(q1 + 1, q2).trim();
+    }
+}

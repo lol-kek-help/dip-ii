@@ -10,4 +10,9 @@ public class FallbackLlmClient implements LlmClient {
     public String ask(String prompt) {
         return "AI service temporary unavailable; use manual triage.";
     }
+
+    @Override
+    public double[] embed(String text) {
+        return new double[0];
+    }
 }
