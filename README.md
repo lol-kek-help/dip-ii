@@ -30,11 +30,17 @@ docker compose up -d postgres
 - `JWT_SECRET`, `JWT_EXPIRATION_SECONDS`
 
 
-## Переменные окружения для реального GigaChat
+## Переменные окружения для GigaChat
 - `AI_LLM_ENABLED=true` — включить реальный HTTP-клиент GigaChat.
-- `GIGACHAT_ACCESS_TOKEN=<ваш_access_token>` — access token для заголовка `Authorization: Bearer ...`.
+- `GIGACHAT_AUTH_KEY=<ваш_auth_key>` — ключ для OAuth-обмена (Basic) и автоматического получения access token.
 - `GIGACHAT_API_URL` (опционально) — URL API chat/completions.
+- `GIGACHAT_AUTH_URL` (опционально) — URL OAuth endpoint (по умолчанию `https://ngw.devices.sberbank.ru:9443/api/v2/oauth`).
+- `GIGACHAT_SCOPE` (опционально, по умолчанию `GIGACHAT_API_PERS`).
 - `GIGACHAT_MODEL` (опционально, по умолчанию `GigaChat-Pro`).
 - `GIGACHAT_TEMPERATURE` (опционально, по умолчанию `0.2`).
 
 Если `AI_LLM_ENABLED=false` (или не задано), используется деградированный `FallbackLlmClient`.
+
+
+### Примечание по токенам
+`access_token` теперь обновляется автоматически внутри backend. В IDEA нужно хранить только `GIGACHAT_AUTH_KEY`, а не вручную обновлять `GIGACHAT_ACCESS_TOKEN`.
