@@ -1,8 +1,13 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 INSERT INTO users(full_name, username, password_hash, role) VALUES
-('Иван Петров','user1','$2a$10$yW73hTrE8ToSc6gBc6ql2uQ5/f4RQ6RhQVZgQes4RQzCaQ35Q7jCa','USER'),
-('Ольга Оператор','operator1','$2a$10$yW73hTrE8ToSc6gBc6ql2uQ5/f4RQ6RhQVZgQes4RQzCaQ35Q7jCa','OPERATOR'),
-('Анна Админ','admin1','$2a$10$yW73hTrE8ToSc6gBc6ql2uQ5/f4RQ6RhQVZgQes4RQzCaQ35Q7jCa','ADMIN')
-ON CONFLICT (username) DO NOTHING;
+                                                                ('Иван Петров','user1',crypt('password', gen_salt('bf', 10)),'USER'),
+                                                                ('Ольга Оператор','operator1',crypt('password', gen_salt('bf', 10)),'OPERATOR'),
+                                                                ('Анна Админ','admin1',crypt('password', gen_salt('bf', 10)),'ADMIN')
+    ON CONFLICT (username) DO UPDATE SET
+    full_name = EXCLUDED.full_name,
+                                  role = EXCLUDED.role,
+                                  password_hash = crypt('password', gen_salt('bf', 10));
 
 INSERT INTO tasks(task_number,title,description,status,priority,category,requester_id,assigned_to_id,created_at,resolution_deadline,resolution_comment) VALUES
 ('INC-1001','Нет доступа к VPN','Сотрудник не может подключиться к VPN после смены пароля','NEW','HIGH','ACCESS',1,2,now()-interval '2 hour',now()+interval '22 hour',null),
