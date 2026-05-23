@@ -1,5 +1,8 @@
 # Система поддержки пользователей (backend)
-
+## Генерация JWT_SECRET
+```bash
+[Convert]::ToBase64String((1..64 | ForEach-Object {Get-Random -Maximum 256}))
+```
 ## Запуск (нужно добавить переменные среды)
 ```bash
 docker compose up -d 
