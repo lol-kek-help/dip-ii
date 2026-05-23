@@ -1,11 +1,10 @@
 # Система поддержки пользователей (backend)
 
-## Запуск
+## Запуск (нужно добавить переменные среды)
 ```bash
 docker compose up -d 
-set -a
-source .env
-set +a
+```
+```bash
 ./mvnw spring-boot:run
 ```
 
