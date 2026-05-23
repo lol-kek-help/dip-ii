@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
@@ -77,6 +78,13 @@ public class GigaChatLlmClient implements LlmClient {
             ResponseEntity<Map> response = restTemplate.exchange(apiUrl, HttpMethod.POST, request, Map.class);
 
             return extractContent(response.getBody());
+        } catch (HttpStatusCodeException ex) {
+            int status = ex.getStatusCode().value();
+            log.error("Ошибка вызова GigaChat API. HTTP status={}", status, ex);
+            if (status == 429) {
+                return "Квота GigaChat исчерпана (HTTP 429).";
+            }
+            return "AI service temporary unavailable; use manual triage.";
         } catch (RestClientException ex) {
             log.error("Ошибка вызова GigaChat API", ex);
             return "AI service temporary unavailable; use manual triage.";

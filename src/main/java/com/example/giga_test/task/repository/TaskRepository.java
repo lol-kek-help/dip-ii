@@ -38,4 +38,3 @@ public interface TaskRepository extends JpaRepository<TaskEntity, Long> {
             Pageable pageable
     );
 }
-
