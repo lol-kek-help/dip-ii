@@ -1,21 +1,22 @@
-package com.example.giga_test.repository;
+package com.example.giga_test.task.repository;
 
 import com.example.giga_test.model.Status;
-import com.example.giga_test.entity.TaskEntity;
+import com.example.giga_test.task.entity.TaskEntity;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
-import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
+
 
 
 //интерфейс автоматически из DataJPA с множеством уже готовых функций
 public interface TaskRepository extends JpaRepository<TaskEntity, Long> {
     List<TaskEntity> findAllByStatus(Status status);
+    List<TaskEntity> findTop5ByTitleContainingIgnoreCaseOrDescriptionContainingIgnoreCase(String title, String description);
     @Modifying
     @Query("""
             update TaskEntity t 
@@ -37,4 +38,3 @@ public interface TaskRepository extends JpaRepository<TaskEntity, Long> {
             Pageable pageable
     );
 }
-
