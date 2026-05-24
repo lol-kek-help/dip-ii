@@ -105,7 +105,10 @@ public class EmbeddingService {
         if (real != null && real.length > 0) {
             return fitDimAndNormalize(real, DIM);
         }
+        return localHashEmbedding(text);
+    }
 
+    private double[] localHashEmbedding(String text) {
         double[] vec = new double[DIM];
         String[] tokens = text.toLowerCase(Locale.ROOT).split("\\s+");
         for (String token : tokens) {

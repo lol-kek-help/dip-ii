@@ -43,6 +43,14 @@ public class AiService {
         var taskItems = taskRepository.findTop5ByTitleContainingIgnoreCaseOrDescriptionContainingIgnoreCase(text, text).stream()
                 .map(t -> new SimilarItem(t.getId(), t.getTitle(), score(text, t.getTitle()+" "+t.getDescription())))
                 .sorted(Comparator.comparingDouble(SimilarItem::score).reversed()).toList();
+        if (taskItems.isEmpty()) {
+            taskItems = taskRepository.findAll().stream()
+                    .map(t -> new SimilarItem(t.getId(), t.getTitle(), score(text, t.getTitle() + " " + t.getDescription())))
+                    .filter(i -> i.score() > 0)
+                    .sorted(Comparator.comparingDouble(SimilarItem::score).reversed())
+                    .limit(5)
+                    .toList();
+        }
 
         var resolvedTasks = taskRepository.findAllByStatus(Status.RESOLVED);
         resolvedTasks.forEach(embeddingService::upsertTaskEmbedding);
