@@ -1,6 +1,7 @@
 package com.example.giga_test.security;
 
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -32,7 +33,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 String role = claims.get("role", String.class);
                 var auth = new UsernamePasswordAuthenticationToken(username, null, List.of(new SimpleGrantedAuthority("ROLE_" + role)));
                 SecurityContextHolder.getContext().setAuthentication(auth);
-            } catch (JwtException ignored) {}
+            } catch (ExpiredJwtException e) {
+                request.setAttribute("auth_error", "Token expired");
+            } catch (JwtException e) {
+                request.setAttribute("auth_error", "Invalid token");
+            }
         }
         filterChain.doFilter(request, response);
     }
