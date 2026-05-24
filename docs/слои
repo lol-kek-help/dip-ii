@@ -1,0 +1,49 @@
+# UML (PlantUML)
+```plantuml
+@startuml
+!define LAYER_SPACING 20
+skinparam packageStyle rectangle
+title Слоевая архитектура серверного приложения
+
+package "Presentation Layer" as PL {
+  package "auth\n(контроллеры)" as AuthCtl
+  package "task\n(контроллеры)" as TaskCtl
+  package "ai\n(контроллеры)" as AiCtl
+}
+
+package "Business Logic Layer" as BL {
+  package "auth\n(сервисы)" as AuthSvc
+  package "task\n(сервисы)" as TaskSvc
+  package "ai\n(сервисы)" as AiSvc
+  package "sla\n(сервисы)" as SlaSvc
+  package "audit\n(сервисы)" as AuditSvc
+}
+
+package "Data Access Layer" as DAL {
+  package "task\n(репозитории)" as TaskRepo
+  package "auth\n(репозитории)" as AuthRepo
+  package "sla\n(репозитории)" as SlaRepo
+  package "audit\n(репозитории)" as AuditRepo
+}
+
+package "Integration Layer" as IL {
+  package "integration\n(GigaChat клиент)" as Integration
+}
+
+package "Security (сквозной)" as Sec {
+  package "security\n(JWT-фильтр, конфигурация)" as SecurityModule
+}
+
+' Зависимости между слоями
+PL --> BL : "вызывает"
+BL --> DAL : "сохраняет/читает"
+BL -left-> IL : "отправляет запросы"
+Sec -right-> PL : "фильтрует"
+Sec --> BL : "внедряется"
+
+' Связь ai с integration (уточнение)
+ AiSvc --> Integration  : "получает эмбеддинги/ответы"
+'Невидимые линии'
+
+@enduml
+```
