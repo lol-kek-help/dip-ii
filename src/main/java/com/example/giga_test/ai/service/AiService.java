@@ -1,95 +1,266 @@
 package com.example.giga_test.ai.service;
 
 import com.example.giga_test.ai.dto.AiDtos.*;
-import com.example.giga_test.model.Status;
-import com.example.giga_test.integration.LlmClient;
+import com.example.giga_test.ai.config.AiSearchProperties;
+import com.example.giga_test.ai.integration.LlmJsonGateway;
 import com.example.giga_test.ai.repository.KnowledgeBaseArticleRepository;
-import com.example.giga_test.task.repository.TaskRepository;
+import com.example.giga_test.model.Status;
 import com.example.giga_test.task.entity.TaskEntity;
+import com.example.giga_test.task.repository.TaskRepository;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class AiService {
-    private final LlmClient llmClient;
+    private final LlmJsonGateway llmJsonGateway;
     private final TaskRepository taskRepository;
     private final KnowledgeBaseArticleRepository articleRepository;
     private final EmbeddingService embeddingService;
+    private final JdbcTemplate jdbcTemplate;
+    private final AiSearchProperties searchProperties;
 
-    public AiService(LlmClient llmClient, TaskRepository taskRepository, KnowledgeBaseArticleRepository articleRepository, EmbeddingService embeddingService) {
-        this.llmClient = llmClient;
+    public AiService(LlmJsonGateway llmJsonGateway, TaskRepository taskRepository, KnowledgeBaseArticleRepository articleRepository, EmbeddingService embeddingService, JdbcTemplate jdbcTemplate, AiSearchProperties searchProperties) {
+        this.llmJsonGateway = llmJsonGateway;
         this.taskRepository = taskRepository;
         this.articleRepository = articleRepository;
         this.embeddingService = embeddingService;
+        this.jdbcTemplate = jdbcTemplate;
+        this.searchProperties = searchProperties;
     }
 
     public ClassifyResponse classify(String text) {
-        String lc = text.toLowerCase();
-        String category = lc.contains("доступ") ? "ACCESS" : lc.contains("инцид") ? "INCIDENT" : "GENERAL";
-        String priority = lc.contains("крит") || lc.contains("простой") ? "URGENT" : "MEDIUM";
-        String llmRaw = llmClient.ask("Верни JSON с полями category и priority для обращения: " + text);
-        String llmCategory = extractJsonField(llmRaw, "category");
-        String llmPriority = extractJsonField(llmRaw, "priority");
-        if (llmCategory != null && !llmCategory.isBlank()) {
-            category = llmCategory.toUpperCase(Locale.ROOT);
-        }
-        if (llmPriority != null && !llmPriority.isBlank()) {
-            priority = llmPriority.toUpperCase(Locale.ROOT);
-        }
-        return new ClassifyResponse(category, priority, llmRaw);
+        String lc = text.toLowerCase(Locale.ROOT);
+        String fallbackCategory = lc.contains("доступ") ? "ACCESS" : lc.contains("инцид") ? "INCIDENT" : "GENERAL";
+        String fallbackPriority = lc.contains("крит") || lc.contains("простой") ? "URGENT" : "MEDIUM";
+
+        var llm = llmJsonGateway.classify(text);
+        boolean useLlm = llm.valid();
+        String category = useLlm ? llm.category() : fallbackCategory;
+        String priority = useLlm ? llm.priority() : fallbackPriority;
+        String rationale = useLlm ? llm.rationale() : "Fallback rule-based classification due to unavailable/invalid LLM response.";
+
+        return new ClassifyResponse(category, priority, rationale,
+                new Explainability(useLlm ? "LLM_JSON" : "FALLBACK_RULES", List.of("ticket_text"), llm.status(), llm.raw()));
     }
 
     public SimilarResponse similar(String text) {
-        var taskItems = taskRepository.findTop5ByTitleContainingIgnoreCaseOrDescriptionContainingIgnoreCase(text, text).stream()
-                .map(t -> new SimilarItem(t.getId(), t.getTitle(), score(text, t.getTitle()+" "+t.getDescription())))
-                .sorted(Comparator.comparingDouble(SimilarItem::score).reversed()).toList();
+        var taskItems = hybridTicketSearch(text);
 
         var resolvedTasks = taskRepository.findAllByStatus(Status.RESOLVED);
         resolvedTasks.forEach(embeddingService::upsertTaskEmbedding);
 
-        var resolvedCases = embeddingService.topK("TASK", text, 3).stream()
-                .map(scored -> mapResolvedCase(scored.record().getSourceId(), scored.score(), resolvedTasks))
+        String category = classify(text).category();
+        Set<String> queryHints = extractHintTokens(text, category);
+        var resolvedCases = embeddingService.topK("TASK", text, 20).stream()
+                .map(scored -> mapResolvedCase(scored.record().getSourceId(), scored.score(), text, resolvedTasks))
                 .filter(Objects::nonNull)
+                .filter(rc -> containsHintToken(queryHints, rc.title() + " " + rc.resolutionComment()))
+                .filter(rc -> rc.fitPercent() >= searchProperties.getMinRelevanceScore() * 100.0)
+                .sorted(Comparator.comparingDouble(ResolvedCaseItem::fitPercent).reversed())
+                .limit(searchProperties.getRagLimit())
                 .toList();
+        if (resolvedCases.isEmpty()) {
+            resolvedCases = embeddingService.topK("TASK", text, 20).stream()
+                    .map(scored -> mapResolvedCase(scored.record().getSourceId(), scored.score(), text, resolvedTasks))
+                    .filter(Objects::nonNull)
+                    .sorted(Comparator.comparingDouble(ResolvedCaseItem::fitPercent).reversed())
+                    .limit(searchProperties.getRagLimit())
+                    .toList();
+        }
 
         var kbArticles = articleRepository.findAll();
         kbArticles.forEach(a -> embeddingService.upsertKnowledgeEmbedding(a.getId(), a.getTitle() + " " + a.getContent()));
-        var articles = embeddingService.topK("KB", text, 3).stream()
-                .map(scored -> kbArticles.stream().filter(a -> a.getId().equals(scored.record().getSourceId())).findFirst().orElse(null))
+        var articleById = kbArticles.stream().collect(Collectors.toMap(a -> a.getId(), a -> a));
+        var articles = embeddingService.topK("KB", text, 20).stream()
+                .map(scored -> {
+                    var article = articleById.get(scored.record().getSourceId());
+                    if (article == null) return null;
+                    if (!containsHintToken(queryHints, article.getTitle() + " " + article.getContent())) return null;
+                    double boosted = hybridScore(scored.score(), score(text, article.getTitle() + " " + article.getContent()), text, article.getTitle() + " " + article.getContent());
+                    if (boosted < searchProperties.getMinRelevanceScore()) return null;
+                    return article.getTitle() + " (релевантность: " + roundToTwoDecimals(boosted * 100.0) + "%)";
+                })
                 .filter(Objects::nonNull)
-                .map(a -> a.getTitle() + " (релевантность: " + roundToTwoDecimals(100.0 * score(text, a.getTitle() + " " + a.getContent())) + "%)")
+                .distinct()
+                .limit(searchProperties.getRagLimit())
                 .toList();
-        return new SimilarResponse(taskItems, resolvedCases, articles);
+        if (articles.isEmpty()) {
+            articles = embeddingService.topK("KB", text, 20).stream()
+                    .map(scored -> {
+                        var article = articleById.get(scored.record().getSourceId());
+                        if (article == null) return null;
+                        double boosted = hybridScore(scored.score(), score(text, article.getTitle() + " " + article.getContent()), text, article.getTitle() + " " + article.getContent());
+                        if (boosted < searchProperties.getMinRelevanceScore()) return null;
+                        return article.getTitle() + " (релевантность: " + roundToTwoDecimals(boosted * 100.0) + "%)";
+                    })
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .limit(searchProperties.getRagLimit())
+                    .toList();
+        }
+
+        return new SimilarResponse(taskItems, resolvedCases, articles,
+                new Explainability("RAG_RETRIEVAL", List.of("resolved_tickets", "knowledge_base", "vector_records"), "N/A", null));
+    }
+
+    private List<SimilarItem> hybridTicketSearch(String query) {
+        var fts = jdbcTemplate.query(
+                """
+                SELECT id, title, ts_rank_cd(
+                    to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(description,'')),
+                    plainto_tsquery('simple', ?)
+                ) AS rank
+                FROM tasks
+                WHERE to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(description,'')) @@ plainto_tsquery('simple', ?)
+                ORDER BY rank DESC
+                LIMIT ?
+                """,
+                (rs, rn) -> new SimilarItem(rs.getLong("id"), rs.getString("title"), rs.getDouble("rank")),
+                query, query, searchProperties.getFtsLimit()
+        );
+
+        var vector = embeddingService.topK("TASK", query, searchProperties.getVectorLimit()).stream()
+                .map(v -> new SimilarItem(v.record().getSourceId(), "", Math.max(0.0, v.score())))
+                .toList();
+
+        Set<String> queryHints = extractHintTokens(query, classify(query).category());
+        var tokenMatches = findByHintTokens(queryHints);
+
+        Map<Long, Double> merged = new HashMap<>();
+        for (int i = 0; i < fts.size(); i++) {
+            merged.merge(fts.get(i).ticketId(), 1.0 / (60 + i + 1), Double::sum);
+        }
+        for (int i = 0; i < vector.size(); i++) {
+            merged.merge(vector.get(i).ticketId(), 1.0 / (60 + i + 1), Double::sum);
+        }
+        for (int i = 0; i < tokenMatches.size(); i++) {
+            merged.merge(tokenMatches.get(i).ticketId(), 2.0 / (40 + i + 1), Double::sum);
+        }
+
+        Map<Long, TaskEntity> taskMap = taskRepository.findAllById(merged.keySet()).stream()
+                .collect(Collectors.toMap(TaskEntity::getId, t -> t));
+
+        String category = classify(query).category();
+        queryHints = extractHintTokens(query, category);
+        var pre = merged.entrySet().stream()
+                .map(e -> {
+                    TaskEntity t = taskMap.get(e.getKey());
+                    if (t == null) return null;
+                    String text = t.getTitle() + " " + (t.getDescription() == null ? "" : t.getDescription());
+                    double boosted = e.getValue() + keywordBoost(query, text);
+                    if (queryHints.contains("vpn") && !containsHintToken(queryHints, text)) {
+                        boosted *= 0.2;
+                    }
+                    return new SimilarItem(t.getId(), t.getTitle(), boosted);
+                })
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparingDouble(SimilarItem::score).reversed())
+                .limit(searchProperties.getRerankLimit())
+                .toList();
+
+        var candidates = pre.stream()
+                .map(i -> {
+                    TaskEntity t = taskMap.get(i.ticketId());
+                    String summary = t == null ? "" : (t.getDescription() == null ? "" : t.getDescription());
+                    return new LlmJsonGateway.CandidateForRerank(i.ticketId(), i.title(), summary);
+                })
+                .toList();
+        var reranked = llmJsonGateway.rerankTickets(query, candidates);
+        if (reranked.isEmpty()) {
+            return pre.stream().limit(searchProperties.getFinalLimit()).toList();
+        }
+        return pre.stream()
+                .map(i -> new SimilarItem(i.ticketId(), i.title(), reranked.getOrDefault(i.ticketId(), 0.0)))
+                .sorted(Comparator.comparingDouble(SimilarItem::score).reversed())
+                .limit(searchProperties.getFinalLimit())
+                .toList();
+    }
+
+    private List<SimilarItem> findByHintTokens(Set<String> hints) {
+        if (hints == null || hints.isEmpty()) return List.of();
+        String[] patterns = hints.stream().map(h -> "%" + h + "%").toArray(String[]::new);
+        return taskRepository.findAll().stream()
+                .filter(t -> {
+                    String text = (t.getTitle() + " " + (t.getDescription() == null ? "" : t.getDescription())).toLowerCase(Locale.ROOT);
+                    for (String p : patterns) {
+                        String token = p.substring(1, p.length() - 1);
+                        if (text.contains(token)) return true;
+                    }
+                    return false;
+                })
+                .map(t -> new SimilarItem(t.getId(), t.getTitle(), 1.0))
+                .limit(30)
+                .toList();
+    }
+
+    private Set<String> extractHintTokens(String text, String category) {
+        String lc = text.toLowerCase(Locale.ROOT);
+        Set<String> out = new HashSet<>();
+        List<String> domain = searchProperties.getDomainTokens().getOrDefault(category, List.of());
+        Set<String> tokens = new HashSet<>(searchProperties.allTokens());
+        tokens.addAll(domain);
+        for (String token : tokens) {
+            if (lc.contains(token)) out.add(token);
+        }
+        return out;
+    }
+
+    private boolean containsHintToken(Set<String> hints, String candidateText) {
+        if (hints == null || hints.isEmpty()) return true;
+        String c = candidateText == null ? "" : candidateText.toLowerCase(Locale.ROOT);
+        for (String h : hints) {
+            if (c.contains(h)) return true;
+        }
+        return false;
     }
 
     public RecommendResponse recommend(String text) {
         var sim = similar(text);
         String ragPrompt = buildRagPrompt(text, sim);
-        return new RecommendResponse(llmClient.ask(ragPrompt),
-                List.of("Проверить похожие кейсы: "+sim.resolvedCases().size(), "Определить маршрутизацию на 2-ю линию", "Подтвердить SLA и эскалацию"));
+        String recommendation = llmJsonGateway.recommend(ragPrompt);
+        return new RecommendResponse(recommendation,
+                List.of("Проверить похожие кейсы: "+sim.resolvedCases().size(), "Определить маршрутизацию на 2-ю линию", "Подтвердить SLA и эскалацию"),
+                new Explainability("RAG_PLUS_LLM", List.of("resolved_tickets", "knowledge_base", "vector_records"), "OK_OR_DEGRADED", recommendation));
     }
 
     private double score(String a, String b) {
-        Set<String> sa = new HashSet<>(Arrays.asList(a.toLowerCase().split("\\s+")));
-        Set<String> sb = new HashSet<>(Arrays.asList(b.toLowerCase().split("\\s+")));
+        Set<String> sa = new HashSet<>(Arrays.asList(a.toLowerCase(Locale.ROOT).split("\\s+")));
+        Set<String> sb = new HashSet<>(Arrays.asList(b.toLowerCase(Locale.ROOT).split("\\s+")));
         if (sa.isEmpty()) return 0;
         long common = sa.stream().filter(sb::contains).count();
         return common * 1.0 / sa.size();
     }
 
-    private double roundToTwoDecimals(double value) {
-        return Math.round(value * 100.0) / 100.0;
-    }
+    private double roundToTwoDecimals(double value) { return Math.round(value * 100.0) / 100.0; }
 
-    private ResolvedCaseItem mapResolvedCase(Long id, double score, List<TaskEntity> tasks) {
+    private ResolvedCaseItem mapResolvedCase(Long id, double vectorScore, String queryText, List<TaskEntity> tasks) {
         TaskEntity task = tasks.stream().filter(t -> t.getId().equals(id)).findFirst().orElse(null);
         if (task == null) return null;
-        return new ResolvedCaseItem(
-                task.getId(),
-                task.getTitle(),
-                roundToTwoDecimals(score * 100.0),
+        double lexicalScore = score(queryText, task.getTitle() + " " + task.getDescription());
+        double boosted = hybridScore(vectorScore, lexicalScore, queryText, task.getTitle() + " " + task.getDescription());
+        return new ResolvedCaseItem(task.getId(), task.getTitle(), roundToTwoDecimals(boosted * 100.0),
                 task.getResolutionComment() == null || task.getResolutionComment().isBlank() ? "Решение не заполнено" : task.getResolutionComment());
+    }
+
+    private double hybridScore(double vectorScore, double lexicalScore, String queryText, String candidateText) {
+        double normalizedVector = Math.max(0.0, Math.min(1.0, vectorScore));
+        double base = (searchProperties.getVectorWeight() * normalizedVector) + (searchProperties.getLexicalWeight() * lexicalScore);
+        return Math.min(1.0, base + keywordBoost(queryText, candidateText));
+    }
+
+    private double keywordBoost(String queryText, String candidateText) {
+        String q = queryText.toLowerCase(Locale.ROOT);
+        String c = candidateText.toLowerCase(Locale.ROOT);
+        double boost = 0.0;
+        for (String token : searchProperties.allTokens()) {
+            if (q.contains(token) && c.contains(token)) {
+                boost += searchProperties.getTokenBoostStep();
+            }
+        }
+        return Math.min(boost, searchProperties.getTokenBoostCap());
     }
 
     private String buildRagPrompt(String text, SimilarResponse sim) {
@@ -101,19 +272,5 @@ public class AiService {
         sim.articles().forEach(a -> sb.append("- ").append(a).append("\n"));
         sb.append("\nДополнительно верни маршрутизацию (очередь/группа) и первые 3 действия.");
         return sb.toString();
-    }
-
-    private String extractJsonField(String json, String field) {
-        if (json == null) return null;
-        String pattern = "\"" + field + "\"";
-        int idx = json.toLowerCase(Locale.ROOT).indexOf(pattern.toLowerCase(Locale.ROOT));
-        if (idx < 0) return null;
-        int colon = json.indexOf(':', idx);
-        if (colon < 0) return null;
-        int q1 = json.indexOf('"', colon + 1);
-        if (q1 < 0) return null;
-        int q2 = json.indexOf('"', q1 + 1);
-        if (q2 < 0) return null;
-        return json.substring(q1 + 1, q2).trim();
     }
 }

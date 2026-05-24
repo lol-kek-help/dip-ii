@@ -70,4 +70,13 @@ public class TaskEntity {
 
     @Column(name = "resolution_comment")
     private String resolutionComment;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @Column(name = "created_by", length = 100)
+    private String createdBy;
+
+    @Column(name = "updated_by", length = 100)
+    private String updatedBy;
 }
