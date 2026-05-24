@@ -18,10 +18,19 @@ public class LlmJsonGateway {
     }
 
     public LlmJsonResult classify(String text) {
-        String prompt = "Верни строго JSON без markdown: {\"category\":\"ACCESS|INCIDENT|GENERAL\",\"priority\":\"LOW|MEDIUM|HIGH|URGENT\",\"rationale\":\"...\"}. Обращение: " + text;
+        String prompt = """
+                Ты классификатор заявок техподдержки.
+                Верни ТОЛЬКО JSON-объект без markdown и без пояснений.
+                category: одно из [ACCESS, INCIDENT, GENERAL]
+                priority: одно из [LOW, MEDIUM, HIGH, URGENT]
+                rationale: краткое объяснение на русском языке.
+                Формат ответа:
+                {"category":"ACCESS","priority":"MEDIUM","rationale":"..."}
+                Текст обращения:
+                """ + text;
         String raw = llmClient.ask(prompt);
         try {
-            JsonNode root = objectMapper.readTree(raw);
+            JsonNode root = objectMapper.readTree(extractJsonObject(raw));
             validate(root, Set.of("category", "priority", "rationale"));
             String category = root.get("category").asText();
             String priority = root.get("priority").asText();
@@ -43,6 +52,26 @@ public class LlmJsonGateway {
             if (!root.hasNonNull(field)) throw new IllegalArgumentException("missing field " + field);
             if (!root.get(field).isTextual()) throw new IllegalArgumentException("field must be text " + field);
         }
+    }
+
+    private String extractJsonObject(String raw) {
+        if (raw == null) {
+            throw new IllegalArgumentException("raw response is null");
+        }
+        String trimmed = raw.trim();
+        if (trimmed.startsWith("```")) {
+            int firstBrace = trimmed.indexOf('{');
+            int lastBrace = trimmed.lastIndexOf('}');
+            if (firstBrace >= 0 && lastBrace > firstBrace) {
+                return trimmed.substring(firstBrace, lastBrace + 1);
+            }
+        }
+        int firstBrace = trimmed.indexOf('{');
+        int lastBrace = trimmed.lastIndexOf('}');
+        if (firstBrace >= 0 && lastBrace > firstBrace) {
+            return trimmed.substring(firstBrace, lastBrace + 1);
+        }
+        return trimmed;
     }
 
     public record LlmJsonResult(boolean valid, String category, String priority, String rationale, String raw, String status) {}
