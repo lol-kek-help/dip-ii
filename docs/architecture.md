@@ -2,24 +2,30 @@
 ```mermaid
 flowchart LR
 
-  User[Пользователь / Оператор]
+    U[Пользователь / Оператор]
 
-  FE[Frontend<br/>React]
-  BE[Backend<br/>Spring Boot]
-  DB[(PostgreSQL)]
-  AI[AI-модуль<br/>Классификация и поиск похожих случаев]
+    FE[Клиентская часть<br/>Веб-интерфейс]
 
-  User --> FE
-  FE -->|REST API| BE
-  BE --> DB
-  BE --> AI
+    subgraph BE[Серверная часть]
+        API[REST API]
+        BL[Бизнес-логика]
+        SEC[Модуль безопасности<br/>JWT + RBAC]
+    end
+
+    DB[(PostgreSQL)]
+
+    subgraph AI[Интеллектуальный модуль]
+        CLS[Классификация обращений]
+        RAG[RAG-поиск похожих случаев]
+    end
+
+    U --> FE
+    FE -->|HTTPS / REST API| API
+
+    API --> BL
+    API --> SEC
+
+    BL --> DB
+    BL --> CLS
+    BL --> RAG
 ```
-Клиентская часть реализована на React.
-
-Серверная часть — Spring Boot 3.x.
-
-Взаимодействие осуществляется через REST API.
-
-Данные хранятся в PostgreSQL.
-
-Интеллектуальный модуль встроен в backend и используется для: классификации обращения, поиска похожих кейсов, подбора статей из базы знаний
