@@ -26,10 +26,16 @@ public class EmbeddingService {
 
     public void upsertTaskEmbedding(TaskEntity taskEntity) {
         String text = (taskEntity.getTitle() + " " + taskEntity.getDescription()).trim();
+        if (isEmbeddingUpToDate("TASK", taskEntity.getId(), text)) {
+            return;
+        }
         upsert("TASK", taskEntity.getId(), text);
     }
 
     public void upsertKnowledgeEmbedding(Long articleId, String content) {
+        if (isEmbeddingUpToDate("KB", articleId, content)) {
+            return;
+        }
         upsert("KB", articleId, content);
     }
 
@@ -75,6 +81,12 @@ public class EmbeddingService {
                 """,
                 sourceType, sourceId, text, serialized, vecLiteral
         );
+    }
+
+    private boolean isEmbeddingUpToDate(String sourceType, Long sourceId, String textContent) {
+        return vectorRecordRepository.findBySourceTypeAndSourceId(sourceType, sourceId)
+                .map(existing -> Objects.equals(existing.getTextContent(), textContent))
+                .orElse(false);
     }
 
     private ScoredVectorRecord mapRecord(java.sql.ResultSet rs, double score) throws java.sql.SQLException {
