@@ -1,9 +1,10 @@
 package com.example.giga_test.ai.service;
 
 import com.example.giga_test.ai.entity.VectorRecord;
-import com.example.giga_test.integration.LlmClient;
 import com.example.giga_test.ai.repository.VectorRecordRepository;
+import com.example.giga_test.integration.LlmClient;
 import com.example.giga_test.task.entity.TaskEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -15,10 +16,12 @@ public class EmbeddingService {
     private static final int DIM = 128;
     private final VectorRecordRepository vectorRecordRepository;
     private final LlmClient llmClient;
+    private final JdbcTemplate jdbcTemplate;
 
-    public EmbeddingService(VectorRecordRepository vectorRecordRepository, LlmClient llmClient) {
+    public EmbeddingService(VectorRecordRepository vectorRecordRepository, LlmClient llmClient, JdbcTemplate jdbcTemplate) {
         this.vectorRecordRepository = vectorRecordRepository;
         this.llmClient = llmClient;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     public void upsertTaskEmbedding(TaskEntity taskEntity) {
@@ -32,6 +35,23 @@ public class EmbeddingService {
 
     public List<ScoredVectorRecord> topK(String sourceType, String query, int k) {
         double[] queryVec = embed(query);
+        String vecLiteral = toVectorLiteral(queryVec);
+        List<ScoredVectorRecord> fromPgVector = jdbcTemplate.query(
+                """
+                SELECT id, source_type, source_id, text_content, embedding,
+                       1 - (embedding_vector <=> CAST(? AS vector)) AS score
+                FROM vector_records
+                WHERE source_type = ? AND embedding_vector IS NOT NULL
+                ORDER BY embedding_vector <=> CAST(? AS vector)
+                LIMIT ?
+                """,
+                (rs, rowNum) -> mapRecord(rs, rs.getDouble("score")),
+                vecLiteral, sourceType, vecLiteral, k
+        );
+        if (!fromPgVector.isEmpty()) {
+            return fromPgVector;
+        }
+
         return vectorRecordRepository.findAllBySourceType(sourceType).stream()
                 .map(v -> new ScoredVectorRecord(v, cosine(queryVec, parse(v.getEmbedding()))))
                 .sorted(Comparator.comparingDouble(ScoredVectorRecord::score).reversed())
@@ -40,18 +60,38 @@ public class EmbeddingService {
     }
 
     private void upsert(String sourceType, Long sourceId, String text) {
-        String vec = serialize(embed(text));
-        VectorRecord record = vectorRecordRepository.findBySourceTypeAndSourceId(sourceType, sourceId)
-                .orElseGet(() -> VectorRecord.builder().sourceType(sourceType).sourceId(sourceId).build());
-        record.setTextContent(text);
-        record.setEmbedding(vec);
-        vectorRecordRepository.save(record);
+        double[] embeddingArray = embed(text);
+        String serialized = serialize(embeddingArray);
+        String vecLiteral = toVectorLiteral(embeddingArray);
+
+        jdbcTemplate.update(
+                """
+                INSERT INTO vector_records(source_type, source_id, text_content, embedding, embedding_vector)
+                VALUES (?, ?, ?, ?, CAST(? AS vector))
+                ON CONFLICT (source_type, source_id)
+                DO UPDATE SET text_content = EXCLUDED.text_content,
+                              embedding = EXCLUDED.embedding,
+                              embedding_vector = EXCLUDED.embedding_vector
+                """,
+                sourceType, sourceId, text, serialized, vecLiteral
+        );
+    }
+
+    private ScoredVectorRecord mapRecord(java.sql.ResultSet rs, double score) throws java.sql.SQLException {
+        VectorRecord record = VectorRecord.builder()
+                .id(rs.getLong("id"))
+                .sourceType(rs.getString("source_type"))
+                .sourceId(rs.getLong("source_id"))
+                .textContent(rs.getString("text_content"))
+                .embedding(rs.getString("embedding"))
+                .build();
+        return new ScoredVectorRecord(record, score);
     }
 
     public double[] embed(String text) {
         double[] real = llmClient.embed(text);
         if (real != null && real.length > 0) {
-            return real;
+            return fitDimAndNormalize(real, DIM);
         }
 
         double[] vec = new double[DIM];
@@ -63,6 +103,14 @@ public class EmbeddingService {
         }
         normalize(vec);
         return vec;
+    }
+
+    private double[] fitDimAndNormalize(double[] input, int dim) {
+        double[] result = new double[dim];
+        int copy = Math.min(dim, input.length);
+        System.arraycopy(input, 0, result, 0, copy);
+        normalize(result);
+        return result;
     }
 
     private void normalize(double[] v) {
@@ -84,7 +132,12 @@ public class EmbeddingService {
         return Arrays.stream(vec).mapToObj(Double::toString).collect(Collectors.joining(","));
     }
 
+    private String toVectorLiteral(double[] vec) {
+        return "[" + Arrays.stream(vec).mapToObj(d -> String.format(Locale.ROOT, "%.8f", d)).collect(Collectors.joining(",")) + "]";
+    }
+
     private double[] parse(String serialized) {
+        if (serialized == null || serialized.isBlank()) return new double[DIM];
         String[] parts = serialized.split(",");
         double[] v = new double[parts.length];
         for (int i = 0; i < parts.length; i++) v[i] = Double.parseDouble(parts[i]);
