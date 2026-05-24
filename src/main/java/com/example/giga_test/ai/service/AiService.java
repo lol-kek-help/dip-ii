@@ -9,9 +9,12 @@ import com.example.giga_test.task.repository.TaskRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class AiService {
+    private static final double MIN_RELEVANCE_SCORE = 0.15;
+    private static final Set<String> BOOST_TOKENS = Set.of("vpn", "парол", "доступ", "ad");
     private final LlmJsonGateway llmJsonGateway;
     private final TaskRepository taskRepository;
     private final KnowledgeBaseArticleRepository articleRepository;
@@ -55,17 +58,28 @@ public class AiService {
         var resolvedTasks = taskRepository.findAllByStatus(Status.RESOLVED);
         resolvedTasks.forEach(embeddingService::upsertTaskEmbedding);
 
-        var resolvedCases = embeddingService.topK("TASK", text, 3).stream()
-                .map(scored -> mapResolvedCase(scored.record().getSourceId(), scored.score(), resolvedTasks))
+        var resolvedCases = embeddingService.topK("TASK", text, 12).stream()
+                .map(scored -> mapResolvedCase(scored.record().getSourceId(), scored.score(), text, resolvedTasks))
                 .filter(Objects::nonNull)
+                .filter(rc -> rc.fitPercent() >= MIN_RELEVANCE_SCORE * 100.0)
+                .sorted(Comparator.comparingDouble(ResolvedCaseItem::fitPercent).reversed())
+                .limit(3)
                 .toList();
 
         var kbArticles = articleRepository.findAll();
         kbArticles.forEach(a -> embeddingService.upsertKnowledgeEmbedding(a.getId(), a.getTitle() + " " + a.getContent()));
-        var articles = embeddingService.topK("KB", text, 3).stream()
-                .map(scored -> kbArticles.stream().filter(a -> a.getId().equals(scored.record().getSourceId())).findFirst().orElse(null))
+        var articleById = kbArticles.stream().collect(Collectors.toMap(a -> a.getId(), a -> a));
+        var articles = embeddingService.topK("KB", text, 12).stream()
+                .map(scored -> {
+                    var article = articleById.get(scored.record().getSourceId());
+                    if (article == null) return null;
+                    double boosted = hybridScore(scored.score(), score(text, article.getTitle() + " " + article.getContent()), text, article.getTitle() + " " + article.getContent());
+                    if (boosted < MIN_RELEVANCE_SCORE) return null;
+                    return article.getTitle() + " (релевантность: " + roundToTwoDecimals(boosted * 100.0) + "%)";
+                })
                 .filter(Objects::nonNull)
-                .map(a -> a.getTitle() + " (релевантность: " + roundToTwoDecimals(100.0 * score(text, a.getTitle() + " " + a.getContent())) + "%)")
+                .distinct()
+                .limit(3)
                 .toList();
 
         return new SimilarResponse(taskItems, resolvedCases, articles,
@@ -91,11 +105,31 @@ public class AiService {
 
     private double roundToTwoDecimals(double value) { return Math.round(value * 100.0) / 100.0; }
 
-    private ResolvedCaseItem mapResolvedCase(Long id, double score, List<TaskEntity> tasks) {
+    private ResolvedCaseItem mapResolvedCase(Long id, double vectorScore, String queryText, List<TaskEntity> tasks) {
         TaskEntity task = tasks.stream().filter(t -> t.getId().equals(id)).findFirst().orElse(null);
         if (task == null) return null;
-        return new ResolvedCaseItem(task.getId(), task.getTitle(), roundToTwoDecimals(score * 100.0),
+        double lexicalScore = score(queryText, task.getTitle() + " " + task.getDescription());
+        double boosted = hybridScore(vectorScore, lexicalScore, queryText, task.getTitle() + " " + task.getDescription());
+        return new ResolvedCaseItem(task.getId(), task.getTitle(), roundToTwoDecimals(boosted * 100.0),
                 task.getResolutionComment() == null || task.getResolutionComment().isBlank() ? "Решение не заполнено" : task.getResolutionComment());
+    }
+
+    private double hybridScore(double vectorScore, double lexicalScore, String queryText, String candidateText) {
+        double normalizedVector = Math.max(0.0, Math.min(1.0, vectorScore));
+        double base = (0.75 * normalizedVector) + (0.25 * lexicalScore);
+        return Math.min(1.0, base + keywordBoost(queryText, candidateText));
+    }
+
+    private double keywordBoost(String queryText, String candidateText) {
+        String q = queryText.toLowerCase(Locale.ROOT);
+        String c = candidateText.toLowerCase(Locale.ROOT);
+        double boost = 0.0;
+        for (String token : BOOST_TOKENS) {
+            if (q.contains(token) && c.contains(token)) {
+                boost += 0.05;
+            }
+        }
+        return Math.min(boost, 0.2);
     }
 
     private String buildRagPrompt(String text, SimilarResponse sim) {
