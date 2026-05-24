@@ -36,7 +36,6 @@ public class EmbeddingService {
     public List<ScoredVectorRecord> topK(String sourceType, String query, int k) {
         double[] queryVec = embed(query);
         String vecLiteral = toVectorLiteral(queryVec);
-
         List<ScoredVectorRecord> fromPgVector = jdbcTemplate.query(
                 """
                 SELECT id, source_type, source_id, text_content, embedding,
@@ -46,19 +45,9 @@ public class EmbeddingService {
                 ORDER BY embedding_vector <=> CAST(? AS vector)
                 LIMIT ?
                 """,
-                (rs, rowNum) -> {
-                    VectorRecord record = VectorRecord.builder()
-                            .id(rs.getLong("id"))
-                            .sourceType(rs.getString("source_type"))
-                            .sourceId(rs.getLong("source_id"))
-                            .textContent(rs.getString("text_content"))
-                            .embedding(rs.getString("embedding"))
-                            .build();
-                    return new ScoredVectorRecord(record, rs.getDouble("score"));
-                },
+                (rs, rowNum) -> mapRecord(rs, rs.getDouble("score")),
                 vecLiteral, sourceType, vecLiteral, k
         );
-
         if (!fromPgVector.isEmpty()) {
             return fromPgVector;
         }
@@ -86,6 +75,17 @@ public class EmbeddingService {
                 """,
                 sourceType, sourceId, text, serialized, vecLiteral
         );
+    }
+
+    private ScoredVectorRecord mapRecord(java.sql.ResultSet rs, double score) throws java.sql.SQLException {
+        VectorRecord record = VectorRecord.builder()
+                .id(rs.getLong("id"))
+                .sourceType(rs.getString("source_type"))
+                .sourceId(rs.getLong("source_id"))
+                .textContent(rs.getString("text_content"))
+                .embedding(rs.getString("embedding"))
+                .build();
+        return new ScoredVectorRecord(record, score);
     }
 
     public double[] embed(String text) {
