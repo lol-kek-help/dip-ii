@@ -6,6 +6,9 @@ import com.example.giga_test.integration.LlmClient;
 import org.springframework.stereotype.Component;
 
 import java.util.Set;
+import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 
 @Component
 public class LlmJsonGateway {
@@ -46,6 +49,40 @@ public class LlmJsonGateway {
         return llmClient.ask(prompt);
     }
 
+    public Map<Long, Double> rerankTickets(String query, List<CandidateForRerank> candidates) {
+        if (candidates == null || candidates.isEmpty()) return Map.of();
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("""
+                Ты ранжировщик похожих инцидентов.
+                Верни ТОЛЬКО JSON-массив без markdown.
+                Формат элемента: {"ticketId":123,"score":0.0}
+                score в диапазоне [0,1], больше = релевантнее.
+                Верни максимум 10 элементов.
+                Запрос пользователя:
+                """).append(query).append("\nКандидаты:\n");
+        for (CandidateForRerank c : candidates) {
+            prompt.append("- ticketId=").append(c.ticketId())
+                    .append("; title=").append(c.title())
+                    .append("; summary=").append(c.summary()).append("\n");
+        }
+        try {
+            String raw = llmClient.ask(prompt.toString());
+            JsonNode root = objectMapper.readTree(extractJsonObject(raw).replaceAll("^\\{\\s*\"items\"\\s*:\\s*", "[").replaceAll("\\}\\s*$", "]"));
+            if (!root.isArray()) return Map.of();
+            Map<Long, Double> out = new HashMap<>();
+            for (JsonNode n : root) {
+                if (n.hasNonNull("ticketId") && n.hasNonNull("score")) {
+                    long id = n.get("ticketId").asLong();
+                    double score = Math.max(0.0, Math.min(1.0, n.get("score").asDouble()));
+                    out.put(id, score);
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
     private void validate(JsonNode root, Set<String> required) {
         if (root == null || !root.isObject()) throw new IllegalArgumentException("root must be object");
         for (String field : required) {
@@ -75,4 +112,5 @@ public class LlmJsonGateway {
     }
 
     public record LlmJsonResult(boolean valid, String category, String priority, String rationale, String raw, String status) {}
+    public record CandidateForRerank(Long ticketId, String title, String summary) {}
 }

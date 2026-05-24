@@ -5,6 +5,7 @@ import com.example.giga_test.ai.repository.KnowledgeBaseArticleRepository;
 import com.example.giga_test.task.repository.TaskRepository;
 import com.example.giga_test.ai.service.AiService;
 import com.example.giga_test.ai.service.EmbeddingService;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -18,7 +19,7 @@ public class AiServiceTest {
         LlmJsonGateway llmJsonGateway = Mockito.mock(LlmJsonGateway.class);
         when(llmJsonGateway.classify(anyString()))
                 .thenReturn(new LlmJsonGateway.LlmJsonResult(true, "ACCESS", "HIGH", "mocked", "OK", "{\"category\":\"ACCESS\",\"priority\":\"HIGH\"}"));
-        AiService service = new AiService(llmJsonGateway, Mockito.mock(TaskRepository.class), Mockito.mock(KnowledgeBaseArticleRepository.class), Mockito.mock(EmbeddingService.class));
+        AiService service = new AiService(llmJsonGateway, Mockito.mock(TaskRepository.class), Mockito.mock(KnowledgeBaseArticleRepository.class), Mockito.mock(EmbeddingService.class), Mockito.mock(JdbcTemplate.class));
         var result = service.classify("критичный инцидент с доступом");
         assertNotNull(result.category());
         assertNotNull(result.priority());

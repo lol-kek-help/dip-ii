@@ -6,6 +6,7 @@ import com.example.giga_test.ai.repository.KnowledgeBaseArticleRepository;
 import com.example.giga_test.model.Status;
 import com.example.giga_test.task.entity.TaskEntity;
 import com.example.giga_test.task.repository.TaskRepository;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -19,12 +20,14 @@ public class AiService {
     private final TaskRepository taskRepository;
     private final KnowledgeBaseArticleRepository articleRepository;
     private final EmbeddingService embeddingService;
+    private final JdbcTemplate jdbcTemplate;
 
-    public AiService(LlmJsonGateway llmJsonGateway, TaskRepository taskRepository, KnowledgeBaseArticleRepository articleRepository, EmbeddingService embeddingService) {
+    public AiService(LlmJsonGateway llmJsonGateway, TaskRepository taskRepository, KnowledgeBaseArticleRepository articleRepository, EmbeddingService embeddingService, JdbcTemplate jdbcTemplate) {
         this.llmJsonGateway = llmJsonGateway;
         this.taskRepository = taskRepository;
         this.articleRepository = articleRepository;
         this.embeddingService = embeddingService;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     public ClassifyResponse classify(String text) {
@@ -43,17 +46,7 @@ public class AiService {
     }
 
     public SimilarResponse similar(String text) {
-        var taskItems = taskRepository.findTop5ByTitleContainingIgnoreCaseOrDescriptionContainingIgnoreCase(text, text).stream()
-                .map(t -> new SimilarItem(t.getId(), t.getTitle(), score(text, t.getTitle()+" "+t.getDescription())))
-                .sorted(Comparator.comparingDouble(SimilarItem::score).reversed()).toList();
-        if (taskItems.isEmpty()) {
-            taskItems = taskRepository.findAll().stream()
-                    .map(t -> new SimilarItem(t.getId(), t.getTitle(), score(text, t.getTitle() + " " + t.getDescription())))
-                    .filter(i -> i.score() > 0)
-                    .sorted(Comparator.comparingDouble(SimilarItem::score).reversed())
-                    .limit(5)
-                    .toList();
-        }
+        var taskItems = hybridTicketSearch(text);
 
         var resolvedTasks = taskRepository.findAllByStatus(Status.RESOLVED);
         resolvedTasks.forEach(embeddingService::upsertTaskEmbedding);
@@ -84,6 +77,66 @@ public class AiService {
 
         return new SimilarResponse(taskItems, resolvedCases, articles,
                 new Explainability("RAG_RETRIEVAL", List.of("resolved_tickets", "knowledge_base", "vector_records"), "N/A", null));
+    }
+
+    private List<SimilarItem> hybridTicketSearch(String query) {
+        var fts = jdbcTemplate.query(
+                """
+                SELECT id, title, ts_rank_cd(
+                    to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(description,'')),
+                    plainto_tsquery('simple', ?)
+                ) AS rank
+                FROM tasks
+                WHERE to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(description,'')) @@ plainto_tsquery('simple', ?)
+                ORDER BY rank DESC
+                LIMIT 25
+                """,
+                (rs, rn) -> new SimilarItem(rs.getLong("id"), rs.getString("title"), rs.getDouble("rank")),
+                query, query
+        );
+
+        var vector = embeddingService.topK("TASK", query, 25).stream()
+                .map(v -> new SimilarItem(v.record().getSourceId(), "", Math.max(0.0, v.score())))
+                .toList();
+
+        Map<Long, Double> merged = new HashMap<>();
+        for (int i = 0; i < fts.size(); i++) {
+            merged.merge(fts.get(i).ticketId(), 1.0 / (60 + i + 1), Double::sum);
+        }
+        for (int i = 0; i < vector.size(); i++) {
+            merged.merge(vector.get(i).ticketId(), 1.0 / (60 + i + 1), Double::sum);
+        }
+
+        Map<Long, TaskEntity> taskMap = taskRepository.findAllById(merged.keySet()).stream()
+                .collect(Collectors.toMap(TaskEntity::getId, t -> t));
+
+        var pre = merged.entrySet().stream()
+                .map(e -> {
+                    TaskEntity t = taskMap.get(e.getKey());
+                    if (t == null) return null;
+                    return new SimilarItem(t.getId(), t.getTitle(), e.getValue());
+                })
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparingDouble(SimilarItem::score).reversed())
+                .limit(10)
+                .toList();
+
+        var candidates = pre.stream()
+                .map(i -> {
+                    TaskEntity t = taskMap.get(i.ticketId());
+                    String summary = t == null ? "" : (t.getDescription() == null ? "" : t.getDescription());
+                    return new LlmJsonGateway.CandidateForRerank(i.ticketId(), i.title(), summary);
+                })
+                .toList();
+        var reranked = llmJsonGateway.rerankTickets(query, candidates);
+        if (reranked.isEmpty()) {
+            return pre.stream().limit(5).toList();
+        }
+        return pre.stream()
+                .map(i -> new SimilarItem(i.ticketId(), i.title(), reranked.getOrDefault(i.ticketId(), 0.0)))
+                .sorted(Comparator.comparingDouble(SimilarItem::score).reversed())
+                .limit(5)
+                .toList();
     }
 
     public RecommendResponse recommend(String text) {
