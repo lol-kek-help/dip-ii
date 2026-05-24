@@ -34,6 +34,7 @@ public class GigaChatLlmClient implements LlmClient {
     private final String authKey;
     private final String scope;
     private final String model;
+    private final String embeddingsModel;
     private final double temperature;
 
     private volatile String cachedAccessToken;
@@ -46,6 +47,7 @@ public class GigaChatLlmClient implements LlmClient {
             @Value("${ai.llm.gigachat.auth-key:}") String authKey,
             @Value("${ai.llm.gigachat.scope:GIGACHAT_API_PERS}") String scope,
             @Value("${ai.llm.gigachat.model:GigaChat-Pro}") String model,
+            @Value("${ai.llm.gigachat.embeddings-model:Embeddings}") String embeddingsModel,
             @Value("${ai.llm.gigachat.temperature:0.2}") double temperature) {
         this.restTemplate = new RestTemplate();
         this.apiUrl = apiUrl;
@@ -54,6 +56,7 @@ public class GigaChatLlmClient implements LlmClient {
         this.authKey = authKey;
         this.scope = scope;
         this.model = model;
+        this.embeddingsModel = embeddingsModel;
         this.temperature = temperature;
     }
 
@@ -69,7 +72,7 @@ public class GigaChatLlmClient implements LlmClient {
             headers.setBearerAuth(accessToken);
 
             Map<String, Object> body = Map.of(
-                    "model", model,
+                    "model", embeddingsModel,
                     "input", List.of(text)
             );
 
