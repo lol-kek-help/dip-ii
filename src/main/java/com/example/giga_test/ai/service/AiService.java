@@ -62,6 +62,14 @@ public class AiService {
                 .sorted(Comparator.comparingDouble(ResolvedCaseItem::fitPercent).reversed())
                 .limit(searchProperties.getRagLimit())
                 .toList();
+        if (resolvedCases.isEmpty()) {
+            resolvedCases = embeddingService.topK("TASK", text, 20).stream()
+                    .map(scored -> mapResolvedCase(scored.record().getSourceId(), scored.score(), text, resolvedTasks))
+                    .filter(Objects::nonNull)
+                    .sorted(Comparator.comparingDouble(ResolvedCaseItem::fitPercent).reversed())
+                    .limit(searchProperties.getRagLimit())
+                    .toList();
+        }
 
         var kbArticles = articleRepository.findAll();
         kbArticles.forEach(a -> embeddingService.upsertKnowledgeEmbedding(a.getId(), a.getTitle() + " " + a.getContent()));
@@ -79,6 +87,20 @@ public class AiService {
                 .distinct()
                 .limit(searchProperties.getRagLimit())
                 .toList();
+        if (articles.isEmpty()) {
+            articles = embeddingService.topK("KB", text, 20).stream()
+                    .map(scored -> {
+                        var article = articleById.get(scored.record().getSourceId());
+                        if (article == null) return null;
+                        double boosted = hybridScore(scored.score(), score(text, article.getTitle() + " " + article.getContent()), text, article.getTitle() + " " + article.getContent());
+                        if (boosted < searchProperties.getMinRelevanceScore()) return null;
+                        return article.getTitle() + " (релевантность: " + roundToTwoDecimals(boosted * 100.0) + "%)";
+                    })
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .limit(searchProperties.getRagLimit())
+                    .toList();
+        }
 
         return new SimilarResponse(taskItems, resolvedCases, articles,
                 new Explainability("RAG_RETRIEVAL", List.of("resolved_tickets", "knowledge_base", "vector_records"), "N/A", null));
@@ -104,6 +126,9 @@ public class AiService {
                 .map(v -> new SimilarItem(v.record().getSourceId(), "", Math.max(0.0, v.score())))
                 .toList();
 
+        Set<String> queryHints = extractHintTokens(query, classify(query).category());
+        var tokenMatches = findByHintTokens(queryHints);
+
         Map<Long, Double> merged = new HashMap<>();
         for (int i = 0; i < fts.size(); i++) {
             merged.merge(fts.get(i).ticketId(), 1.0 / (60 + i + 1), Double::sum);
@@ -111,12 +136,15 @@ public class AiService {
         for (int i = 0; i < vector.size(); i++) {
             merged.merge(vector.get(i).ticketId(), 1.0 / (60 + i + 1), Double::sum);
         }
+        for (int i = 0; i < tokenMatches.size(); i++) {
+            merged.merge(tokenMatches.get(i).ticketId(), 2.0 / (40 + i + 1), Double::sum);
+        }
 
         Map<Long, TaskEntity> taskMap = taskRepository.findAllById(merged.keySet()).stream()
                 .collect(Collectors.toMap(TaskEntity::getId, t -> t));
 
         String category = classify(query).category();
-        Set<String> queryHints = extractHintTokens(query, category);
+        queryHints = extractHintTokens(query, category);
         var pre = merged.entrySet().stream()
                 .map(e -> {
                     TaskEntity t = taskMap.get(e.getKey());
@@ -148,6 +176,23 @@ public class AiService {
                 .map(i -> new SimilarItem(i.ticketId(), i.title(), reranked.getOrDefault(i.ticketId(), 0.0)))
                 .sorted(Comparator.comparingDouble(SimilarItem::score).reversed())
                 .limit(searchProperties.getFinalLimit())
+                .toList();
+    }
+
+    private List<SimilarItem> findByHintTokens(Set<String> hints) {
+        if (hints == null || hints.isEmpty()) return List.of();
+        String[] patterns = hints.stream().map(h -> "%" + h + "%").toArray(String[]::new);
+        return taskRepository.findAll().stream()
+                .filter(t -> {
+                    String text = (t.getTitle() + " " + (t.getDescription() == null ? "" : t.getDescription())).toLowerCase(Locale.ROOT);
+                    for (String p : patterns) {
+                        String token = p.substring(1, p.length() - 1);
+                        if (text.contains(token)) return true;
+                    }
+                    return false;
+                })
+                .map(t -> new SimilarItem(t.getId(), t.getTitle(), 1.0))
+                .limit(30)
                 .toList();
     }
 
