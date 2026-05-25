@@ -5,9 +5,11 @@ import com.example.giga_test.audit.repository.AuditLogRepository;
 import com.example.giga_test.auth.repository.UserRepository;
 import com.example.giga_test.ai.service.AiService;
 import com.example.giga_test.model.Category;
+import com.example.giga_test.model.Priority;
 import com.example.giga_test.model.Status;
 import com.example.giga_test.model.Task;
 import com.example.giga_test.sla.service.SlaService;
+import com.example.giga_test.task.dto.CreateTaskRequest;
 import com.example.giga_test.task.dto.TaskSearchFilter;
 import com.example.giga_test.task.entity.TaskEntity;
 import com.example.giga_test.task.mapper.TaskMapper;
@@ -17,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,8 +48,27 @@ public class TaskService {
     public List<Task> searchTaskByFilter(TaskSearchFilter filter) {
         int pageSize = filter.pageSize() != null ? filter.pageSize() : 10;
         int pageNumber = filter.pageNumber() != null ? filter.pageNumber() : 0;
-        var pageable = Pageable.ofSize(pageSize).withPage(pageNumber);
-        Page<TaskEntity> allEntitys = repository.searchByFilter(filter.requester(), filter.assignedTo(), pageable);
+
+        String requestedSortBy = filter.sortBy() == null ? "createdAt" : filter.sortBy();
+        String sortProperty = switch (requestedSortBy) {
+            case "createdAt", "updatedAt", "resolutionDeadline", "priority", "status" -> requestedSortBy;
+            default -> "createdAt";
+        };
+        Sort.Direction direction = "asc".equalsIgnoreCase(filter.sortDir()) ? Sort.Direction.ASC : Sort.Direction.DESC;
+
+        var pageable = Pageable.ofSize(pageSize).withPage(pageNumber).withSort(Sort.by(direction, sortProperty));
+        Page<TaskEntity> allEntitys = repository.searchByFilter(
+                filter.assignedTo(),
+                filter.requester(),
+                filter.status(),
+                filter.priority(),
+                filter.category(),
+                filter.createdFrom(),
+                filter.createdTo(),
+                filter.deadlineFrom(),
+                filter.deadlineTo(),
+                pageable
+        );
         return allEntitys.stream().map(mapper::entityToTask).toList();
     }
 
@@ -54,15 +76,27 @@ public class TaskService {
         return mapper.entityToTask(getEntity(id));
     }
 
-    public Task createTask(Task taskToCreate) {
-        if (!taskToCreate.getResolutionDeadline().isAfter(taskToCreate.getCreatedAt())) {
+    public Task createTask(CreateTaskRequest request) {
+        var requester = userRepository.findById(request.requesterId())
+                .orElseThrow(() -> new EntityNotFoundException("Инициатор не найден"));
+
+        LocalDateTime now = LocalDateTime.now();
+        if (!request.resolutionDeadline().isAfter(now)) {
             throw new IllegalArgumentException("До дедлайна минимум должен быть 1 день");
         }
-        TaskEntity entityToSave = mapper.taskToEntity(taskToCreate);
+
+        TaskEntity entityToSave = new TaskEntity();
         entityToSave.setId(null);
-        entityToSave.setStatus(entityToSave.getStatus() == null ? Status.NEW : entityToSave.getStatus());
-        entityToSave.setCreatedAt(entityToSave.getCreatedAt() == null ? LocalDateTime.now() : entityToSave.getCreatedAt());
-        entityToSave.setUpdatedAt(LocalDateTime.now());
+        entityToSave.setTitle(request.title());
+        entityToSave.setDescription(request.description());
+        entityToSave.setPriority(request.priority() == null ? Priority.MEDIUM : request.priority());
+        entityToSave.setCategory(request.category() == null ? Category.GENERAL : request.category());
+        entityToSave.setRequester(requester);
+        entityToSave.setStatus(Status.NEW);
+        entityToSave.setCreatedAt(now);
+        entityToSave.setResolutionDeadline(request.resolutionDeadline());
+        entityToSave.setUpdatedAt(now);
+
         TaskEntity savedEntity = repository.save(entityToSave);
         slaService.ensureForTicket(savedEntity);
         writeAudit(savedEntity, "CREATE", "Создан тикет");
