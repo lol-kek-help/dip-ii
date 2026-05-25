@@ -1,0 +1,40 @@
+@startuml
+skinparam ActivityBackgroundColor #FEFEFE
+skinparam ActivityBorderColor #333333
+title Блок-схема аутентификации и обновления токенов
+
+start
+:Логин / пароль;
+if (Успешно?) then (да)
+  :Получение access + refresh токенов;
+else (нет)
+  :401 Ошибка;
+  stop
+endif
+
+:Запрос к защищённому ресурсу
+(Authorization: Bearer <access>);
+
+if (Access-токен?) then (валиден)
+  :Доступ разрешён;
+  if (Выход?) then (да)
+    :Отзыв refresh-токена\n/logout -> 204;
+    stop
+  else (нет)
+    stop
+  endif
+elseif (истёк)
+  :Запрос /auth/refresh\nс refresh-токеном;
+  if (Refresh-токен OK?) then (да)
+    :Отзыв старого refresh\nВыдача новой пары токенов;
+    :Повтор запроса с новым access;
+    stop
+  else (нет)
+    :401 Требуется логин;
+    stop
+  endif
+else (недействителен)
+  :401 Требуется логин;
+  stop
+endif
+@enduml
