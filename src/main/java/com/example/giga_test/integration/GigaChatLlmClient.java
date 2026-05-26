@@ -39,6 +39,7 @@ public class GigaChatLlmClient implements LlmClient {
 
     private volatile String cachedAccessToken;
     private volatile Instant tokenExpiresAt;
+    private volatile Instant throttleUntil;
 
     public GigaChatLlmClient(
             @Value("${ai.llm.gigachat.api-url:https://gigachat.devices.sberbank.ru/api/v1/chat/completions}") String apiUrl,
@@ -65,6 +66,9 @@ public class GigaChatLlmClient implements LlmClient {
         if (authKey == null || authKey.isBlank()) {
             return new double[0];
         }
+        if (isThrottled()) {
+            return new double[0];
+        }
         try {
             String accessToken = getOrRefreshAccessToken();
             HttpHeaders headers = new HttpHeaders();
@@ -79,6 +83,12 @@ public class GigaChatLlmClient implements LlmClient {
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<Map> response = restTemplate.exchange(embeddingsUrl, HttpMethod.POST, request, Map.class);
             return extractEmbedding(response.getBody());
+        } catch (HttpStatusCodeException ex) {
+            if (ex.getStatusCode().value() == 429) {
+                activateThrottle();
+            }
+            log.warn("Не удалось получить embedding из GigaChat, используем локальный fallback", ex);
+            return new double[0];
         } catch (RestClientException ex) {
             log.warn("Не удалось получить embedding из GigaChat, используем локальный fallback", ex);
             return new double[0];
@@ -113,6 +123,7 @@ public class GigaChatLlmClient implements LlmClient {
             int status = ex.getStatusCode().value();
             log.error("Ошибка вызова GigaChat API. HTTP status={}", status, ex);
             if (status == 429) {
+                activateThrottle();
                 return "Квота GigaChat исчерпана (HTTP 429).";
             }
             return "AI service temporary unavailable; use manual triage.";
@@ -171,6 +182,15 @@ public class GigaChatLlmClient implements LlmClient {
         }
 
         return now.plusSeconds(25 * 60L);
+    }
+
+    private boolean isThrottled() {
+        Instant until = throttleUntil;
+        return until != null && Instant.now().isBefore(until);
+    }
+
+    private void activateThrottle() {
+        this.throttleUntil = Instant.now().plusSeconds(30);
     }
 
     private String extractContent(Map<?, ?> body) {
