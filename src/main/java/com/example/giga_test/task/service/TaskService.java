@@ -12,12 +12,12 @@ import com.example.giga_test.sla.service.SlaService;
 import com.example.giga_test.task.dto.CreateTaskRequest;
 import com.example.giga_test.task.dto.TaskSearchFilter;
 import com.example.giga_test.task.entity.TaskEntity;
-import com.example.giga_test.task.mapper.TaskMapper;
 import com.example.giga_test.task.repository.TaskRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -29,15 +29,13 @@ import java.util.List;
 @Service
 public class TaskService {
     private static final Logger log = LoggerFactory.getLogger(TaskService.class);
-    private final TaskMapper mapper;
     private final TaskRepository repository;
     private final UserRepository userRepository;
     private final AuditLogRepository auditLogRepository;
     private final SlaService slaService;
     private final AiService aiService;
 
-    public TaskService(TaskMapper mapper, TaskRepository repository, UserRepository userRepository, AuditLogRepository auditLogRepository, SlaService slaService, AiService aiService) {
-        this.mapper = mapper;
+    public TaskService(TaskRepository repository, UserRepository userRepository, AuditLogRepository auditLogRepository, SlaService slaService, AiService aiService) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.auditLogRepository = auditLogRepository;
@@ -56,7 +54,7 @@ public class TaskService {
         };
         Sort.Direction direction = "asc".equalsIgnoreCase(filter.sortDir()) ? Sort.Direction.ASC : Sort.Direction.DESC;
 
-        var pageable = Pageable.ofSize(pageSize).withPage(pageNumber).withSort(Sort.by(direction, sortProperty));
+        var pageable = PageRequest.of(pageNumber, pageSize, Sort.by(direction, sortProperty));
         Page<TaskEntity> allEntitys = repository.searchByFilter(
                 filter.assignedTo(),
                 filter.requester(),
@@ -69,11 +67,11 @@ public class TaskService {
                 filter.deadlineTo(),
                 pageable
         );
-        return allEntitys.stream().map(mapper::entityToTask).toList();
+        return allEntitys.stream().map(this::entityToTask).toList();
     }
 
     public Task getTaskByID(Long id) {
-        return mapper.entityToTask(getEntity(id));
+        return entityToTask(getEntity(id));
     }
 
     public Task createTask(CreateTaskRequest request) {
@@ -100,7 +98,7 @@ public class TaskService {
         TaskEntity savedEntity = repository.save(entityToSave);
         slaService.ensureForTicket(savedEntity);
         writeAudit(savedEntity, "CREATE", "Создан тикет");
-        return mapper.entityToTask(savedEntity);
+        return entityToTask(savedEntity);
     }
 
     @Transactional
@@ -112,7 +110,7 @@ public class TaskService {
         TaskEntity saved = repository.save(taskEntity);
         slaService.onStatusChange(saved, newStatus);
         writeAudit(saved, "STATUS_CHANGE", "Статус: " + newStatus + (reason == null ? "" : "; reason=" + reason));
-        return mapper.entityToTask(saved);
+        return entityToTask(saved);
     }
 
     @Transactional
@@ -127,7 +125,7 @@ public class TaskService {
         TaskEntity saved = repository.save(taskEntity);
         slaService.onStatusChange(saved, saved.getStatus());
         writeAudit(saved, "ASSIGN", "Назначен исполнитель id=" + assigneeId);
-        return mapper.entityToTask(saved);
+        return entityToTask(saved);
     }
 
     @Transactional
@@ -173,11 +171,11 @@ public class TaskService {
         if(taskEntity.getStatus() == Status.CLOSED){
             throw new IllegalStateException("Cannot approve" + taskEntity.getStatus());
         }
-        Task processedTask = sendToAI(mapper.entityToTask(taskEntity));
-        TaskEntity entityToSave = mapper.taskToEntity(processedTask);
+        Task processedTask = sendToAI(entityToTask(taskEntity));
+        TaskEntity entityToSave = taskToEntity(processedTask);
         entityToSave.setId(taskEntity.getId());
         TaskEntity savedEntity = repository.save(entityToSave);
-        return mapper.entityToTask(savedEntity);
+        return entityToTask(savedEntity);
     }
 
     private Task sendToAI(Task task) {
@@ -190,4 +188,38 @@ public class TaskService {
         }
         return task.toBuilder().category(category).build();
     }
+    private Task entityToTask(TaskEntity entity) {
+        Task task = new Task();
+        task.setId(entity.getId());
+        task.setTaskNumber(entity.getTaskNumber());
+        task.setTitle(entity.getTitle());
+        task.setDescriprion(entity.getDescription());
+        task.setStatus(entity.getStatus());
+        task.setPriority(entity.getPriority());
+        task.setCategory(entity.getCategory());
+        task.setRequester(entity.getRequester());
+        task.setAssignedTo(entity.getAssignedTo());
+        task.setCreatedAt(entity.getCreatedAt());
+        task.setResolutionDeadline(entity.getResolutionDeadline());
+        task.setResolutionComment(entity.getResolutionComment());
+        return task;
+    }
+
+    private TaskEntity taskToEntity(Task task) {
+        TaskEntity entity = new TaskEntity();
+        entity.setId(task.getId());
+        entity.setTaskNumber(task.getTaskNumber());
+        entity.setTitle(task.getTitle());
+        entity.setDescription(task.getDescriprion());
+        entity.setStatus(task.getStatus());
+        entity.setPriority(task.getPriority());
+        entity.setCategory(task.getCategory());
+        entity.setRequester(task.getRequester());
+        entity.setAssignedTo(task.getAssignedTo());
+        entity.setCreatedAt(task.getCreatedAt());
+        entity.setResolutionDeadline(task.getResolutionDeadline());
+        entity.setResolutionComment(task.getResolutionComment());
+        return entity;
+    }
+
 }
