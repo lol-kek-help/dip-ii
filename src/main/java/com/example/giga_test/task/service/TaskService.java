@@ -20,6 +20,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -55,18 +56,18 @@ public class TaskService {
         Sort.Direction direction = "asc".equalsIgnoreCase(filter.sortDir()) ? Sort.Direction.ASC : Sort.Direction.DESC;
 
         var pageable = PageRequest.of(pageNumber, pageSize, Sort.by(direction, sortProperty));
-        Page<TaskEntity> allEntitys = repository.searchByFilter(
-                filter.assignedTo(),
-                filter.requester(),
-                filter.status(),
-                filter.priority(),
-                filter.category(),
-                filter.createdFrom(),
-                filter.createdTo(),
-                filter.deadlineFrom(),
-                filter.deadlineTo(),
-                pageable
-        );
+        Specification<TaskEntity> spec = Specification.where(null);
+        if (filter.assignedTo() != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("assignedTo").get("id"), filter.assignedTo()));
+        if (filter.requester() != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("requester").get("id"), filter.requester()));
+        if (filter.status() != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("status"), filter.status()));
+        if (filter.priority() != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("priority"), filter.priority()));
+        if (filter.category() != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("category"), filter.category()));
+        if (filter.createdFrom() != null) spec = spec.and((r, q, cb) -> cb.greaterThanOrEqualTo(r.get("createdAt"), filter.createdFrom()));
+        if (filter.createdTo() != null) spec = spec.and((r, q, cb) -> cb.lessThanOrEqualTo(r.get("createdAt"), filter.createdTo()));
+        if (filter.deadlineFrom() != null) spec = spec.and((r, q, cb) -> cb.greaterThanOrEqualTo(r.get("resolutionDeadline"), filter.deadlineFrom()));
+        if (filter.deadlineTo() != null) spec = spec.and((r, q, cb) -> cb.lessThanOrEqualTo(r.get("resolutionDeadline"), filter.deadlineTo()));
+
+        Page<TaskEntity> allEntitys = repository.findAll(spec, pageable);
         return allEntitys.stream().map(this::entityToTask).toList();
     }
 
