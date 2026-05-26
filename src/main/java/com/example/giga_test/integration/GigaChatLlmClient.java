@@ -102,6 +102,10 @@ public class GigaChatLlmClient implements LlmClient {
             return "AI client misconfigured: empty GigaChat auth key.";
         }
 
+        if (isThrottled()) {
+            return "Квота GigaChat временно исчерпана, попробуйте позже.";
+        }
+
         try {
             String accessToken = getOrRefreshAccessToken();
 
