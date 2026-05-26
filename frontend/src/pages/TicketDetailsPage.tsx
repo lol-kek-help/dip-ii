@@ -6,6 +6,21 @@ import { categoryLabel, priorityLabel, statusLabel } from '../utils/formatters';
 import { taskApi } from '../api/taskApi';
 import { Task } from '../types/models';
 
+
+function prettyAiText(raw?: string) {
+  if (!raw) return '';
+  return raw
+    .replace(/\r/g, '')
+    .replace(/---/g, '\n')
+    .replace(/###\s*/g, '')
+    .replace(/####\s*/g, '\n')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/^\s*\*\s+/gm, '• ')
+    .replace(/
+{3,}/g, '\n\n')
+    .trim();
+}
+
 export function TicketDetailsPage() {
   const { id } = useParams(); const ticketId = Number(id);
   const [task, setTask] = useState<Task>(); const [classify, setClassify] = useState<any>(); const [similar, setSimilar] = useState<any>(); const [recommend, setRecommend] = useState<any>();
@@ -31,6 +46,6 @@ export function TicketDetailsPage() {
   <Col span={8}><Card title='ИИ-помощник'><Space direction='vertical' style={{ width: '100%' }}><Button block onClick={async()=>{ const c = await aiApi.classify(text); setClassify(c); aiForm.setFieldsValue({ category: c.category, priority: c.priority }); }}>Получить классификацию</Button><Button block onClick={async()=>setSimilar(await aiApi.similar(text))}>Найти похожие обращения</Button><Button block onClick={async()=>setRecommend(await aiApi.recommend(text))}>Показать рекомендации</Button></Space>
   {classify && <Card size='small' style={{ marginTop: 12 }}><Typography.Text strong>Предложение ИИ</Typography.Text><div>Категория: {categoryLabel[classify.category as keyof typeof categoryLabel] ?? classify.category}</div><div>Приоритет: {priorityLabel[classify.priority as keyof typeof priorityLabel] ?? classify.priority}</div><div>{classify.rationale}</div><Form form={aiForm} onFinish={applyAi} layout='vertical'><Form.Item name='category' label='Категория'><Select allowClear options={['GENERAL','INCIDENT','ACCESS','BILLING'].map((v)=>({value:v,label:categoryLabel[v as keyof typeof categoryLabel]}))} /></Form.Item><Form.Item name='priority' label='Приоритет'><Select allowClear options={['LOW','MEDIUM','HIGH','URGENT'].map((v)=>({value:v,label:priorityLabel[v as keyof typeof priorityLabel]}))} /></Form.Item><Button htmlType='submit' type='primary'>Принять предложение ИИ</Button></Form></Card>}
   {similar && <Card size='small' title='Похожие' style={{ marginTop: 12 }}>{similar.tickets?.map((t:any)=><div key={t.ticketId}>#{t.ticketId} {t.title} ({Math.round(t.score*100)}%)</div>)}</Card>}
-  {recommend && <Alert style={{ marginTop: 12 }} type='info' message='Рекомендация' description={recommend.recommendation} />}
+  {recommend && <Card size='small' style={{ marginTop: 12 }} title='Рекомендация'><Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>{prettyAiText(recommend.recommendation)}</Typography.Paragraph></Card>}
   </Card></Col></Row>;
 }

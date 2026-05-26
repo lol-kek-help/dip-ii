@@ -69,10 +69,6 @@ public class GigaChatLlmClient implements LlmClient {
         if (isThrottled()) {
             return new double[0];
         }
-        if (isThrottled()) {
-            return "Квота GigaChat временно исчерпана, попробуйте позже.";
-        }
-
         try {
             String accessToken = getOrRefreshAccessToken();
             HttpHeaders headers = new HttpHeaders();
