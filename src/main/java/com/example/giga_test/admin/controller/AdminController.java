@@ -6,7 +6,7 @@ import com.example.giga_test.auth.repository.UserRepository;
 import com.example.giga_test.model.Category;
 import com.example.giga_test.model.Priority;
 import com.example.giga_test.model.Status;
-import com.example.giga_test.model.User;
+import com.example.giga_test.user.dto.UserSummaryDto;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -27,8 +27,8 @@ public class AdminController {
     }
 
     @GetMapping("/users")
-    public List<User> users() {
-        return userRepository.findAll();
+    public List<UserSummaryDto> users() {
+        return userRepository.findAll().stream().map(UserSummaryDto::from).toList();
     }
 
     @GetMapping("/audit")

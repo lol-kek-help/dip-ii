@@ -8,12 +8,13 @@ const { Header, Sider, Content } = Layout;
 export function AppLayout() {
   const location = useLocation(); const navigate = useNavigate();
   const { role, refreshToken, clear } = useAuthStore();
+  const canOperate = role === 'OPERATOR' || role === 'ADMIN';
   const items = [
     { key: '/', icon: <DashboardOutlined />, label: <Link to='/'>Дашборд</Link> },
     { key: '/tickets', icon: <FileTextOutlined />, label: <Link to='/tickets'>Обращения</Link> },
     { key: '/tickets/new', icon: <PlusCircleOutlined />, label: <Link to='/tickets/new'>Создать</Link> },
     { key: '/knowledge', label: <Link to='/knowledge'>База знаний</Link> },
-    { key: '/analytics', label: <Link to='/analytics'>Аналитика</Link> },
+    ...(canOperate ? [{ key: '/analytics', label: <Link to='/analytics'>Аналитика</Link> }] : []),
     ...(role === 'ADMIN' ? [{ key: '/admin', label: <Link to='/admin'>Администрирование</Link> }] : [])
   ];
   const logout = async () => { try { if (refreshToken) await authApi.logout(refreshToken); } finally { clear(); navigate('/login'); } };

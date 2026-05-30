@@ -26,7 +26,7 @@ export function AppRoutes() {
       <Route path='tickets/new' element={<CreateTicketPage />} />
       <Route path='tickets/:id' element={<TicketDetailsPage />} />
       <Route path='knowledge' element={<KnowledgePage />} />
-      <Route path='analytics' element={<AnalyticsPage />} />
+      <Route path='analytics' element={<Guard roles={['OPERATOR', 'ADMIN']}><AnalyticsPage /></Guard>} />
       <Route path='admin' element={<Guard roles={['ADMIN']}><AdminPage /></Guard>} />
     </Route>
   </Routes>;

@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
@@ -89,6 +90,10 @@ public class GigaChatLlmClient implements LlmClient {
             }
             log.warn("Не удалось получить embedding из GigaChat, используем локальный fallback", ex);
             return new double[0];
+        } catch (ResourceAccessException ex) {
+            activateThrottle();
+            log.warn("Нет сети/доступа к GigaChat embeddings, используем локальный fallback: {}", ex.getMessage());
+            return new double[0];
         } catch (RestClientException ex) {
             log.warn("Не удалось получить embedding из GigaChat, используем локальный fallback", ex);
             return new double[0];
@@ -131,6 +136,10 @@ public class GigaChatLlmClient implements LlmClient {
                 return "Квота GigaChat исчерпана (HTTP 429).";
             }
             return "AI service temporary unavailable; use manual triage.";
+        } catch (ResourceAccessException ex) {
+            activateThrottle();
+            log.warn("Нет сети/доступа к GigaChat API, используем fallback: {}", ex.getMessage());
+            return "AI недоступен (проблема сети/DNS), используйте ручную обработку.";
         } catch (RestClientException ex) {
             log.error("Ошибка вызова GigaChat API", ex);
             return "AI service temporary unavailable; use manual triage.";

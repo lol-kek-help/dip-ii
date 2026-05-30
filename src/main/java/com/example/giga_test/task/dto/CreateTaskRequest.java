@@ -4,7 +4,6 @@ import com.example.giga_test.model.Category;
 import com.example.giga_test.model.Priority;
 import jakarta.validation.constraints.Future;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDateTime;
@@ -14,6 +13,6 @@ public record CreateTaskRequest(
         @NotBlank @Size(max = 4000) String description,
         Priority priority,
         Category category,
-        @NotNull Long requesterId,
+        Long requesterId,
         @Future LocalDateTime resolutionDeadline
 ) {}

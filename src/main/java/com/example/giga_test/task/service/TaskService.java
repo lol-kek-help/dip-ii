@@ -6,7 +6,9 @@ import com.example.giga_test.auth.repository.UserRepository;
 import com.example.giga_test.ai.service.AiService;
 import com.example.giga_test.model.Category;
 import com.example.giga_test.model.Priority;
+import com.example.giga_test.model.RoleName;
 import com.example.giga_test.model.Status;
+import com.example.giga_test.model.User;
 import com.example.giga_test.model.Task;
 import com.example.giga_test.sla.service.SlaService;
 import com.example.giga_test.task.dto.CreateTaskRequest;
@@ -18,9 +20,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -56,9 +60,12 @@ public class TaskService {
         Sort.Direction direction = "asc".equalsIgnoreCase(filter.sortDir()) ? Sort.Direction.ASC : Sort.Direction.DESC;
 
         var pageable = PageRequest.of(pageNumber, pageSize, Sort.by(direction, sortProperty));
-        Specification<TaskEntity> spec = Specification.where(null);
+        User currentUser = currentUser();
+        Long effectiveRequester = currentUser.getRole() == RoleName.USER ? currentUser.getId() : filter.requester();
+
+        Specification<TaskEntity> spec = (root, query, cb) -> cb.conjunction();
         if (filter.assignedTo() != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("assignedTo").get("id"), filter.assignedTo()));
-        if (filter.requester() != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("requester").get("id"), filter.requester()));
+        if (effectiveRequester != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("requester").get("id"), effectiveRequester));
         if (filter.status() != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("status"), filter.status()));
         if (filter.priority() != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("priority"), filter.priority()));
         if (filter.category() != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("category"), filter.category()));
@@ -75,12 +82,18 @@ public class TaskService {
         return entityToTask(getEntity(id));
     }
 
+    @Transactional
     public Task createTask(CreateTaskRequest request) {
-        var requester = userRepository.findById(request.requesterId())
+        User currentUser = currentUser();
+        Long requesterId = currentUser.getRole() == RoleName.USER ? currentUser.getId() : request.requesterId();
+        if (requesterId == null) {
+            throw new IllegalArgumentException("Инициатор обращения обязателен");
+        }
+        var requester = userRepository.findById(requesterId)
                 .orElseThrow(() -> new EntityNotFoundException("Инициатор не найден"));
 
         LocalDateTime now = LocalDateTime.now();
-        if (!request.resolutionDeadline().isAfter(now)) {
+        if (request.resolutionDeadline() != null && !request.resolutionDeadline().isAfter(now)) {
             throw new IllegalArgumentException("До дедлайна минимум должен быть 1 день");
         }
 
@@ -104,6 +117,7 @@ public class TaskService {
 
     @Transactional
     public Task changeStatus(Long id, Status newStatus, String reason) {
+        requireOperatorOrAdmin();
         TaskEntity taskEntity = getEntity(id);
         validateTransition(taskEntity.getStatus(), newStatus);
         taskEntity.setStatus(newStatus);
@@ -116,6 +130,7 @@ public class TaskService {
 
     @Transactional
     public Task assign(Long id, Long assigneeId) {
+        requireOperatorOrAdmin();
         TaskEntity taskEntity = getEntity(id);
         var assignee = userRepository.findById(assigneeId).orElseThrow(() -> new EntityNotFoundException("Исполнитель не найден"));
         taskEntity.setAssignedTo(assignee);
@@ -136,11 +151,29 @@ public class TaskService {
 
     @Transactional
     public Task close(Long id, String resolutionComment) {
+        requireOperatorOrAdmin();
         TaskEntity taskEntity = getEntity(id);
         taskEntity.setResolutionComment(resolutionComment);
         taskEntity.setUpdatedAt(LocalDateTime.now());
         repository.save(taskEntity);
         return changeStatus(id, Status.CLOSED, "Закрыт");
+    }
+
+
+    private User currentUser() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || authentication.getName() == null) {
+            throw new EntityNotFoundException("Текущий пользователь не найден");
+        }
+        return userRepository.findByUsername(authentication.getName())
+                .orElseThrow(() -> new EntityNotFoundException("Текущий пользователь не найден"));
+    }
+
+    private void requireOperatorOrAdmin() {
+        RoleName role = currentUser().getRole();
+        if (role != RoleName.OPERATOR && role != RoleName.ADMIN) {
+            throw new AccessDeniedException("Недостаточно прав для выполнения операции");
+        }
     }
 
     private void validateTransition(Status current, Status target) {
@@ -153,7 +186,24 @@ public class TaskService {
     }
 
     private TaskEntity getEntity(Long id) {
-        return repository.findById(id).orElseThrow(() -> new EntityNotFoundException("No that id = " + id));
+        TaskEntity task = repository.findById(id).orElseThrow(() -> new EntityNotFoundException("No that id = " + id));
+        User currentUser = currentUser();
+        if (currentUser.getRole() == RoleName.USER && (task.getRequester() == null || !currentUser.getId().equals(task.getRequester().getId()))) {
+            throw new EntityNotFoundException("No that id = " + id);
+        }
+        return task;
+    }
+
+    @Transactional
+    public Task updateClassification(Long id, Category category, Priority priority) {
+        requireOperatorOrAdmin();
+        TaskEntity taskEntity = getEntity(id);
+        taskEntity.setCategory(category);
+        taskEntity.setPriority(priority);
+        taskEntity.setUpdatedAt(LocalDateTime.now());
+        TaskEntity saved = repository.save(taskEntity);
+        writeAudit(saved, "CLASSIFICATION_UPDATE", "Категория=" + category + "; приоритет=" + priority);
+        return entityToTask(saved);
     }
 
     private void writeAudit(TaskEntity ticket, String action, String details) {
@@ -168,6 +218,7 @@ public class TaskService {
     }
 
     public Task aiProcessingTask(Long id) {
+        requireOperatorOrAdmin();
         TaskEntity taskEntity = getEntity(id);
         if(taskEntity.getStatus() == Status.CLOSED){
             throw new IllegalStateException("Cannot approve" + taskEntity.getStatus());

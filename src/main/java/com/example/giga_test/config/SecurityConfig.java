@@ -28,7 +28,10 @@ public class SecurityConfig {
                 .exceptionHandling(eh -> eh.authenticationEntryPoint(securityErrorHandlers).accessDeniedHandler(securityErrorHandlers))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/**").permitAll()
+                        .requestMatchers("/admin/**").hasRole("ADMIN")
                         .requestMatchers("/ai/**").hasAnyRole("OPERATOR", "ADMIN")
+                        .requestMatchers("/sla/**").hasAnyRole("OPERATOR", "ADMIN")
+                        .requestMatchers("/users/**").authenticated()
                         .requestMatchers("/tickets/**").authenticated()
                         .requestMatchers("/task/**").authenticated()
                         .anyRequest().authenticated())

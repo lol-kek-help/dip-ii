@@ -18,6 +18,24 @@ docker compose up -d postgres
 ./mvnw spring-boot:run
 ```
 
+
+## Сохранность данных PostgreSQL
+
+`compose.yaml` использует именованный Docker volume `postgres-data`, поэтому созданные заявки сохраняются при обычном перезапуске backend-приложения и контейнера PostgreSQL:
+
+```bash
+docker compose restart postgres
+# или просто перезапустите Spring Boot backend в IDE / через ./mvnw spring-boot:run
+```
+
+Важно: команда `docker compose down -v` удаляет volume PostgreSQL и вместе с ним все созданные заявки, refresh-токены, SLA и аудит. Для обычной остановки используйте:
+
+```bash
+docker compose down
+```
+
+Если после перезапуска backend новые заявки пропали, проверьте, что backend подключается к той же базе (`DB_URL`, `DB_USER`, `DB_PASSWORD`) и что volume не был удалён через `down -v` или Docker Desktop.
+
 ## Запуск frontend (React + Vite)
 Frontend находится в каталоге `frontend/`.
 

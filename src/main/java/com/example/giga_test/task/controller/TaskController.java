@@ -3,6 +3,7 @@ package com.example.giga_test.task.controller;
 import com.example.giga_test.model.Task;
 import com.example.giga_test.task.dto.CreateTaskRequest;
 import com.example.giga_test.task.dto.TaskSearchFilter;
+import com.example.giga_test.task.dto.UpdateClassificationRequest;
 import com.example.giga_test.task.dto.TicketLifecycleDtos.*;
 import com.example.giga_test.task.service.TaskService;
 import jakarta.validation.Valid;
@@ -61,6 +62,12 @@ public class TaskController {
     @PatchMapping("/{id}/status")
     public ResponseEntity<Task> changeStatus(@PathVariable Long id, @RequestBody @Valid ChangeStatusRequest request) {
         return ResponseEntity.ok(taskService.changeStatus(id, request.status(), request.reason()));
+    }
+
+
+    @PatchMapping("/{id}/classification")
+    public ResponseEntity<Task> updateClassification(@PathVariable Long id, @RequestBody @Valid UpdateClassificationRequest request) {
+        return ResponseEntity.ok(taskService.updateClassification(id, request.category(), request.priority()));
     }
 
     @PatchMapping("/{id}/assignee")
