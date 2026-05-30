@@ -21,11 +21,16 @@ import java.util.List;
 @EnableWebSecurity
 public class SecurityConfig {
     @Bean
-    SecurityFilterChain filterChain(HttpSecurity http, JwtAuthFilter jwtAuthFilter, SecurityErrorHandlers securityErrorHandlers) throws Exception {
+    //отключение CSRF, stateless, правила доступа
+    SecurityFilterChain filterChain(HttpSecurity http, JwtAuthFilter jwtAuthFilter,
+                                    SecurityErrorHandlers securityErrorHandlers)
+            throws Exception {
         return http.csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .exceptionHandling(eh -> eh.authenticationEntryPoint(securityErrorHandlers).accessDeniedHandler(securityErrorHandlers))
+                .sessionManagement(sm -> sm.sessionCreationPolicy(
+                        SessionCreationPolicy.STATELESS))
+                .exceptionHandling(eh -> eh.authenticationEntryPoint(
+                        securityErrorHandlers).accessDeniedHandler(securityErrorHandlers))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/**").permitAll()
                         .requestMatchers("/admin/**").hasRole("ADMIN")

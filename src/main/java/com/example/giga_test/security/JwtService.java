@@ -15,12 +15,13 @@ import java.util.Date;
 public class JwtService {
     private final SecretKey key;
     private final long expirationSec;
-
-    public JwtService(@Value("${security.jwt.secret}") String secret, @Value("${security.jwt.expiration-seconds:3600}") long expirationSec) {
+    //проверка токенов
+    public JwtService(@Value("${security.jwt.secret}") String secret,
+                      @Value("${security.jwt.expiration-seconds:3600}") long expirationSec) {
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.expirationSec = expirationSec;
     }
-
+    //генерация (HMAC + claims)
     public String generateToken(String username, String role) {
         Instant now = Instant.now();
         return Jwts.builder()

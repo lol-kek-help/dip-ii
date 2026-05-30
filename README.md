@@ -52,7 +52,7 @@ npm run dev
 При необходимости можно переопределить через переменную окружения:
 
 ```bash
-VITE_API_URL=http://localhost:8080 npm run dev
+$env:VITE_API_URL="http://localhost:8080"
 ```
 
 ## Production-сборка frontend

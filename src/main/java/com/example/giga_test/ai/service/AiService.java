@@ -108,17 +108,20 @@ public class AiService {
 
     private List<SimilarItem> hybridTicketSearch(String query) {
         var fts = jdbcTemplate.query(
-                """
+                //fts поиск похожего
+                """ 
                 SELECT id, title, ts_rank_cd(
                     to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(description,'')),
                     plainto_tsquery('simple', ?)
                 ) AS rank
                 FROM tasks
-                WHERE to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(description,'')) @@ plainto_tsquery('simple', ?)
+                WHERE to_tsvector('simple', coalesce(title,'') || ' ' || coalesce(description,''))
+                 @@ plainto_tsquery('simple', ?)
                 ORDER BY rank DESC
                 LIMIT ?
                 """,
-                (rs, rn) -> new SimilarItem(rs.getLong("id"), rs.getString("title"), rs.getDouble("rank")),
+                (rs, rn) -> new SimilarItem(rs.getLong("id"),
+                        rs.getString("title"), rs.getDouble("rank")),
                 query, query, searchProperties.getFtsLimit()
         );
 
@@ -126,8 +129,8 @@ public class AiService {
                 .map(v -> new SimilarItem(v.record().getSourceId(), "", Math.max(0.0, v.score())))
                 .toList();
 
-        Set<String> queryHints = extractHintTokens(query, classify(query).category());
-        var tokenMatches = findByHintTokens(queryHints);
+        final Set<String> retrievalHints = extractHintTokens(query, classify(query).category());
+        var tokenMatches = findByHintTokens(retrievalHints);
 
         Map<Long, Double> merged = new HashMap<>();
         for (int i = 0; i < fts.size(); i++) {
@@ -144,7 +147,7 @@ public class AiService {
                 .collect(Collectors.toMap(TaskEntity::getId, t -> t));
 
         String category = classify(query).category();
-        queryHints = extractHintTokens(query, category);
+        final Set<String> queryHints = extractHintTokens(query, category);
         var pre = merged.entrySet().stream()
                 .map(e -> {
                     TaskEntity t = taskMap.get(e.getKey());

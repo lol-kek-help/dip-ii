@@ -37,11 +37,12 @@ public class AuthService {
 
     @Transactional
     public AuthTokenResponse login(AuthRequest request) {
-        var user = userRepository.findByUsername(request.username()).orElseThrow(() -> new EntityNotFoundException("Пользователь не найден"));
+        var user = userRepository.findByUsername(request.username()).orElseThrow(() ->
+                new EntityNotFoundException("Пользователь не найден"));
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
             throw new AuthException("Неверный пароль");
         }
-        refreshTokenRepository.deleteByUser(user);
+        refreshTokenRepository.deleteByUser(user); //удаляет старые токены
         return issueTokens(user);
     }
 

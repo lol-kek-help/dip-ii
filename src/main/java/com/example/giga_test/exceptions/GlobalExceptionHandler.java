@@ -16,25 +16,28 @@ import java.time.LocalDateTime;
 public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    //ошибка 500
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponseDto> handleGeneralException(Exception e){
         log.error("Handle exception", e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(new ErrorResponseDto("INTERNAL_ERROR", "Внутренняя ошибка сервера", e.getMessage(), LocalDateTime.now()));
     }
-
+    //ошибка 404
     @ExceptionHandler(EntityNotFoundException.class)
     public ResponseEntity<ErrorResponseDto> handleEntityNotFound(EntityNotFoundException e){
         log.warn("Entity not found", e);
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(new ErrorResponseDto("NOT_FOUND", "Сущность не найдена", e.getMessage(), LocalDateTime.now()));
+                .body(new ErrorResponseDto("NOT_FOUND", "Сущность не найдена",
+                        e.getMessage(), LocalDateTime.now()));
     }
-
+    //ошибка 401
     @ExceptionHandler(AuthException.class)
     public ResponseEntity<ErrorResponseDto> handleAuthException(AuthException e){
         log.warn("Auth error", e);
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(new ErrorResponseDto("UNAUTHORIZED", "Ошибка аутентификации", e.getMessage(), LocalDateTime.now()));
+                .body(new ErrorResponseDto("UNAUTHORIZED", "Ошибка аутентификации",
+                        e.getMessage(), LocalDateTime.now()));
     }
 
     @ExceptionHandler(AccessDeniedException.class)
@@ -43,7 +46,7 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(new ErrorResponseDto("FORBIDDEN", "Недостаточно прав", e.getMessage(), LocalDateTime.now()));
     }
-
+    //ошибка 400
     @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class, MethodArgumentNotValidException.class})
     public ResponseEntity<ErrorResponseDto> handleBadRequest(Exception e){
         log.warn("Bad request", e);
