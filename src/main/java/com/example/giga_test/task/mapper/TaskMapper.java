@@ -10,14 +10,14 @@ public class TaskMapper {
     public Task entityToTask(TaskEntity entity) {
         Task task = new Task();
         BeanUtils.copyProperties(entity, task);
-        task.setDescriprion(entity.getDescription());
+        task.setDescription(entity.getDescription());
         return task;
     }
 
     public TaskEntity taskToEntity(Task task) {
         TaskEntity entity = new TaskEntity();
         BeanUtils.copyProperties(task, entity);
-        entity.setDescription(task.getDescriprion());
+        entity.setDescription(task.getDescription());
         return entity;
     }
 }

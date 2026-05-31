@@ -1,16 +1,79 @@
-import { Button, Card, DatePicker, Form, Input, Select, Space, Table, Tag } from 'antd';
-import dayjs from 'dayjs';
+import { Button, Card, DatePicker, Form, Select, Space, Table, Tag } from 'antd';
+import { Dayjs } from 'dayjs';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { taskApi } from '../api/taskApi';
+import { ticketApi, TicketFilter } from '../api/ticketApi';
 import { categoryLabel, priorityLabel, statusLabel } from '../utils/formatters';
-import { useAuthStore } from '../store/authStore';
-import { Task } from '../types/models';
+import { Category, Priority, Status, Ticket } from '../types/models';
+
+interface TicketFilterFormValues {
+  status?: Status;
+  category?: Category;
+  priority?: Priority;
+  createdRange?: [Dayjs, Dayjs];
+  sortBy?: string;
+  sortDir?: 'asc' | 'desc';
+}
 
 export function TicketsPage() {
-  const [tasks, setTasks] = useState<Task[]>([]); const [loading, setLoading] = useState(false); const role = useAuthStore((s) => s.role); const username = useAuthStore((s) => s.username);
-  const load = async (v: any = {}) => { setLoading(true); try { const params: any = { ...v, pageSize: 50, pageNumber: 0 }; if (v.createdRange) { params.createdFrom = v.createdRange[0].toISOString(); params.createdTo = v.createdRange[1].toISOString(); delete params.createdRange; } const data = await taskApi.list(params); setTasks(role === 'USER' ? data.filter((t) => t.requester?.username === username) : data); } finally { setLoading(false); } };
-  useEffect(() => { load(); }, []);
-  return <Card title='Список обращений'><Form layout='inline' onFinish={load}><Form.Item name='status'><Select allowClear placeholder='Статус' style={{ width: 160 }} options={['NEW','ASSIGNED','IN_PROGRESS','CLOSED','ESCALATED'].map((s) => ({ value: s, label: statusLabel[s as keyof typeof statusLabel] }))} /></Form.Item><Form.Item name='category'><Select allowClear placeholder='Категория' style={{ width: 140 }} options={['GENERAL','INCIDENT','ACCESS','BILLING'].map((s) => ({ value: s, label: categoryLabel[s as keyof typeof categoryLabel] }))} /></Form.Item><Form.Item name='priority'><Select allowClear placeholder='Приоритет' style={{ width: 140 }} options={['LOW','MEDIUM','HIGH','URGENT'].map((s) => ({ value: s, label: priorityLabel[s as keyof typeof priorityLabel] }))} /></Form.Item><Form.Item name='createdRange'><DatePicker.RangePicker showTime /></Form.Item><Form.Item name='sortBy'><Select allowClear placeholder='Сортировать по' style={{ width: 180 }} options={['createdAt','updatedAt','resolutionDeadline','priority','status'].map((s) => ({ value: s }))}/></Form.Item><Form.Item name='sortDir'><Select allowClear placeholder='Направление' style={{ width: 140 }} options={[{value:'asc',label:'По возр.'},{value:'desc',label:'По убыв.'}]} /></Form.Item><Space><Button htmlType='submit' type='primary'>Применить</Button><Button onClick={() => load()}>Сброс</Button></Space></Form>
-  <Table rowKey='id' loading={loading} style={{ marginTop: 16 }} dataSource={tasks} columns={[{ title:'ID', dataIndex:'id' },{ title:'Тема', dataIndex:'title', render:(_,r)=><Link to={`/tickets/${r.id}`}>{r.title}</Link> },{ title:'Статус', dataIndex:'status', render:(s)=><Tag>{statusLabel[s as keyof typeof statusLabel] ?? s}</Tag>},{ title:'Приоритет', dataIndex:'priority', render:(p)=> priorityLabel[p as keyof typeof priorityLabel] ?? p },{ title:'Категория', dataIndex:'category', render:(c)=> categoryLabel[c as keyof typeof categoryLabel] ?? c }]} /></Card>;
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [pageNumber, setPageNumber] = useState(0);
+  const [pageSize, setPageSize] = useState(10);
+  const [form] = Form.useForm<TicketFilterFormValues>();
+
+  const buildParams = (values: TicketFilterFormValues, nextPage = pageNumber, nextSize = pageSize): TicketFilter => {
+    const params: TicketFilter = { pageSize: nextSize, pageNumber: nextPage, sortBy: values.sortBy, sortDir: values.sortDir };
+    if (values.status) params.status = values.status;
+    if (values.category) params.category = values.category;
+    if (values.priority) params.priority = values.priority;
+    if (values.createdRange) {
+      params.createdFrom = values.createdRange[0].toISOString();
+      params.createdTo = values.createdRange[1].toISOString();
+    }
+    return params;
+  };
+
+  const load = async (nextPage = pageNumber, nextSize = pageSize) => {
+    setLoading(true);
+    try {
+      const data = await ticketApi.list(buildParams(form.getFieldsValue(), nextPage, nextSize));
+      setTickets(data.items);
+      setTotal(data.totalElements);
+      setPageNumber(data.pageNumber);
+      setPageSize(data.pageSize);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(0, pageSize); }, []);
+
+  return <Card title='Список обращений'>
+    <Form form={form} layout='inline' onFinish={() => load(0, pageSize)}>
+      <Form.Item name='status'><Select allowClear placeholder='Статус' style={{ width: 160 }} options={['NEW','ASSIGNED','IN_PROGRESS','PENDING_USER','ESCALATED','RETURNED','RESOLVED','CLOSED','CANCELED'].map((s) => ({ value: s, label: statusLabel[s as keyof typeof statusLabel] ?? s }))} /></Form.Item>
+      <Form.Item name='category'><Select allowClear placeholder='Категория' style={{ width: 140 }} options={['GENERAL','INCIDENT','ACCESS','BILLING'].map((s) => ({ value: s, label: categoryLabel[s as keyof typeof categoryLabel] }))} /></Form.Item>
+      <Form.Item name='priority'><Select allowClear placeholder='Приоритет' style={{ width: 140 }} options={['LOW','MEDIUM','HIGH','URGENT'].map((s) => ({ value: s, label: priorityLabel[s as keyof typeof priorityLabel] }))} /></Form.Item>
+      <Form.Item name='createdRange'><DatePicker.RangePicker showTime /></Form.Item>
+      <Form.Item name='sortBy'><Select allowClear placeholder='Сортировать по' style={{ width: 180 }} options={['createdAt','updatedAt','resolutionDeadline','priority','status','category'].map((s) => ({ value: s }))}/></Form.Item>
+      <Form.Item name='sortDir'><Select allowClear placeholder='Направление' style={{ width: 140 }} options={[{value:'asc',label:'По возр.'},{value:'desc',label:'По убыв.'}]} /></Form.Item>
+      <Space><Button htmlType='submit' type='primary'>Применить</Button><Button onClick={() => { form.resetFields(); load(0, pageSize); }}>Сброс</Button></Space>
+    </Form>
+    <Table<Ticket>
+      rowKey='id'
+      loading={loading}
+      style={{ marginTop: 16 }}
+      dataSource={tickets}
+      pagination={{ current: pageNumber + 1, pageSize, total, showSizeChanger: true, onChange: (page, size) => load(page - 1, size) }}
+      locale={{ emptyText: 'Обращения не найдены' }}
+      columns={[
+        { title:'ID', dataIndex:'id' },
+        { title:'Тема', dataIndex:'title', render:(_,r)=><Link to={`/tickets/${r.id}`}>{r.title}</Link> },
+        { title:'Статус', dataIndex:'status', render:(s: Status)=><Tag>{statusLabel[s] ?? s}</Tag>},
+        { title:'Приоритет', dataIndex:'priority', render:(p: Priority)=> p ? (priorityLabel[p] ?? p) : '—' },
+        { title:'Категория', dataIndex:'category', render:(c: Category)=> c ? (categoryLabel[c] ?? c) : '—' }
+      ]}
+    />
+  </Card>;
 }

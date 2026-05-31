@@ -1,4 +1,5 @@
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
+import { message } from 'antd';
 import { useAuthStore } from '../store/authStore';
 
 export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8080' });
@@ -12,9 +13,16 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-api.interceptors.response.use((r) => r, async (error) => {
-  const original = error.config;
-  if (error.response?.status === 401 && !original._retry) {
+function errorText(error: AxiosError): string {
+  const data = error.response?.data as { message?: string; details?: string } | undefined;
+  if (error.response?.status === 403) return 'Недостаточно прав';
+  if (error.response?.status === 401) return 'Сессия истекла, войдите заново';
+  return data?.details || data?.message || error.message || 'Ошибка запроса';
+}
+
+api.interceptors.response.use((r) => r, async (error: AxiosError) => {
+  const original = error.config as (typeof error.config & { _retry?: boolean });
+  if (error.response?.status === 401 && original && !original._retry) {
     original._retry = true;
     const { refreshToken, clear, setAuth, username, role } = useAuthStore.getState();
     if (!refreshToken) { clear(); throw error; }
@@ -30,8 +38,9 @@ api.interceptors.response.use((r) => r, async (error) => {
       setAuth({ accessToken: next.accessToken, refreshToken: next.refreshToken, username: username!, role: role! });
       queue.forEach((cb) => cb(next.accessToken)); queue = [];
       return api(original);
-    } catch (e) { queue.forEach((cb) => cb(null)); queue=[]; clear(); throw e; }
+    } catch (e) { queue.forEach((cb) => cb(null)); queue=[]; clear(); message.error('Сессия истекла, войдите заново'); throw e; }
     finally { isRefreshing = false; }
   }
+  message.error(errorText(error));
   throw error;
 });

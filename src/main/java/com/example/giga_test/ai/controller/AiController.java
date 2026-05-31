@@ -19,4 +19,7 @@ public class AiController {
     public ResponseEntity<SimilarResponse> similar(@RequestBody @Valid AiRequest request) { return ResponseEntity.ok(service.similar(request.text())); }
     @PostMapping("/recommend")
     public ResponseEntity<RecommendResponse> recommend(@RequestBody @Valid AiRequest request) { return ResponseEntity.ok(service.recommend(request.text())); }
+
+    @GetMapping("/quality")
+    public ResponseEntity<com.example.giga_test.ai.dto.AiQualityReportDto> quality() { return ResponseEntity.ok(service.qualityReport()); }
 }

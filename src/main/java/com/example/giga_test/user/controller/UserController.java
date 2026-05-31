@@ -1,7 +1,6 @@
 package com.example.giga_test.user.controller;
 
 import com.example.giga_test.auth.repository.UserRepository;
-import com.example.giga_test.model.RoleName;
 import com.example.giga_test.model.User;
 import com.example.giga_test.user.dto.UserSummaryDto;
 import jakarta.persistence.EntityNotFoundException;
@@ -28,10 +27,7 @@ public class UserController {
 
     @GetMapping
     public List<UserSummaryDto> users(Authentication authentication) {
-        User currentUser = currentUser(authentication);
-        if (currentUser.getRole() == RoleName.USER) {
-            return List.of(UserSummaryDto.from(currentUser));
-        }
+        currentUser(authentication);
         return userRepository.findAll().stream().map(UserSummaryDto::from).toList();
     }
 
