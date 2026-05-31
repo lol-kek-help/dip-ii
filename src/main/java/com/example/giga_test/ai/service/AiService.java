@@ -3,10 +3,13 @@ package com.example.giga_test.ai.service;
 import com.example.giga_test.ai.dto.AiDtos.*;
 import com.example.giga_test.ai.config.AiSearchProperties;
 import com.example.giga_test.ai.integration.LlmJsonGateway;
+import com.example.giga_test.audit.repository.AuditLogRepository;
 import com.example.giga_test.ai.repository.KnowledgeBaseArticleRepository;
+import com.example.giga_test.ai.dto.AiQualityReportDto;
 import com.example.giga_test.model.Status;
 import com.example.giga_test.task.entity.TaskEntity;
 import com.example.giga_test.task.repository.TaskRepository;
+import com.example.giga_test.ticket.repository.AiRecommendationRepository;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -21,14 +24,18 @@ public class AiService {
     private final EmbeddingService embeddingService;
     private final JdbcTemplate jdbcTemplate;
     private final AiSearchProperties searchProperties;
+    private final AiRecommendationRepository aiRecommendationRepository;
+    private final AuditLogRepository auditLogRepository;
 
-    public AiService(LlmJsonGateway llmJsonGateway, TaskRepository taskRepository, KnowledgeBaseArticleRepository articleRepository, EmbeddingService embeddingService, JdbcTemplate jdbcTemplate, AiSearchProperties searchProperties) {
+    public AiService(LlmJsonGateway llmJsonGateway, TaskRepository taskRepository, KnowledgeBaseArticleRepository articleRepository, EmbeddingService embeddingService, JdbcTemplate jdbcTemplate, AiSearchProperties searchProperties, AiRecommendationRepository aiRecommendationRepository, AuditLogRepository auditLogRepository) {
         this.llmJsonGateway = llmJsonGateway;
         this.taskRepository = taskRepository;
         this.articleRepository = articleRepository;
         this.embeddingService = embeddingService;
         this.jdbcTemplate = jdbcTemplate;
         this.searchProperties = searchProperties;
+        this.aiRecommendationRepository = aiRecommendationRepository;
+        this.auditLogRepository = auditLogRepository;
     }
 
     public ClassifyResponse classify(String text) {
@@ -50,7 +57,6 @@ public class AiService {
         var taskItems = hybridTicketSearch(text);
 
         var resolvedTasks = taskRepository.findAllByStatus(Status.RESOLVED);
-        resolvedTasks.forEach(embeddingService::upsertTaskEmbedding);
 
         String category = classify(text).category();
         Set<String> queryHints = extractHintTokens(text, category);
@@ -72,7 +78,6 @@ public class AiService {
         }
 
         var kbArticles = articleRepository.findAll();
-        kbArticles.forEach(a -> embeddingService.upsertKnowledgeEmbedding(a.getId(), a.getTitle() + " " + a.getContent()));
         var articleById = kbArticles.stream().collect(Collectors.toMap(a -> a.getId(), a -> a));
         var articles = embeddingService.topK("KB", text, 20).stream()
                 .map(scored -> {
@@ -227,6 +232,24 @@ public class AiService {
         return new RecommendResponse(recommendation,
                 List.of("Проверить похожие кейсы: "+sim.resolvedCases().size(), "Определить маршрутизацию на 2-ю линию", "Подтвердить SLA и эскалацию"),
                 new Explainability("RAG_PLUS_LLM", List.of("resolved_tickets", "knowledge_base", "vector_records"), "OK_OR_DEGRADED", recommendation));
+    }
+
+
+    public AiQualityReportDto qualityReport() {
+        var recommendations = aiRecommendationRepository.findAll();
+        long total = recommendations.size();
+        long evaluated = recommendations.stream().filter(r -> r.getAccepted() != null).count();
+        long accepted = recommendations.stream().filter(r -> Boolean.TRUE.equals(r.getAccepted())).count();
+        double acceptanceRate = evaluated == 0 ? 0 : accepted * 100.0 / evaluated;
+        double avgScore = recommendations.stream()
+                .filter(r -> r.getUsefulnessScore() != null)
+                .mapToInt(r -> r.getUsefulnessScore())
+                .average()
+                .orElse(0);
+        long classificationChanges = auditLogRepository.countByAction("CLASSIFICATION_UPDATE");
+        long ticketsTotal = taskRepository.count();
+        double classificationChangeRate = ticketsTotal == 0 ? 0 : classificationChanges * 100.0 / ticketsTotal;
+        return new AiQualityReportDto(total, evaluated, accepted, acceptanceRate, avgScore, classificationChanges, classificationChangeRate);
     }
 
     private double score(String a, String b) {

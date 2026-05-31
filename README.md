@@ -71,10 +71,13 @@ npm run preview
 
 ## Что реализовано на текущем этапе
 - JWT-аутентификация: `/auth/login`, `/auth/logout`, `/auth/refresh`
-- API заявок: `/tickets/**` и `/task/**`
+- API обращений: `/tickets/**`
 - AI API для оператора: `/ai/classify`, `/ai/similar`, `/ai/recommend`
 - База знаний API: `/knowledge`, `/knowledge/{id}`
 - Админ API: `/admin/users`, `/admin/audit`, `/admin/dictionaries`
+- Комментарии, история статусов и сохранённые AI-рекомендации по обращениям
+- Уведомления: `/notifications/**`
+- Расширенная SLA-аналитика и метрики качества AI
 - Базовый RAG-сценарий через `knowledge_base_articles` и исторические заявки
 - Миграции Flyway и тестовые данные
 

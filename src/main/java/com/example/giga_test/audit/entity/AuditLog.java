@@ -30,6 +30,18 @@ public class AuditLog {
     @Column(length = 8000)
     private String details;
 
+    @Column(name = "before_value", length = 8000)
+    private String beforeValue;
+
+    @Column(name = "after_value", length = 8000)
+    private String afterValue;
+
+    @Column(name = "ip_address", length = 64)
+    private String ipAddress;
+
+    @Column(name = "user_agent", length = 1000)
+    private String userAgent;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private String createdBy;

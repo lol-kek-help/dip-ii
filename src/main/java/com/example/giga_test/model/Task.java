@@ -20,7 +20,7 @@ public class Task {
     @NotNull
     String title;
     @NotNull
-    String descriprion;
+    String description;
     Status status;
     Priority priority;
     Category category;

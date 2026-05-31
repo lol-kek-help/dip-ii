@@ -13,6 +13,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
@@ -48,7 +51,7 @@ public class AuthService {
 
     @Transactional
     public AuthTokenResponse refresh(RefreshTokenRequest request) {
-        RefreshTokenEntity tokenEntity = refreshTokenRepository.findByToken(request.refreshToken())
+        RefreshTokenEntity tokenEntity = refreshTokenRepository.findByToken(hashRefreshToken(request.refreshToken()))
                 .orElseThrow(() -> new AuthException("Refresh token не найден"));
         if (tokenEntity.isRevoked()) {
             throw new AuthException("Refresh token отозван");
@@ -66,7 +69,7 @@ public class AuthService {
 
     @Transactional
     public void logout(LogoutRequest request) {
-        RefreshTokenEntity tokenEntity = refreshTokenRepository.findByToken(request.refreshToken())
+        RefreshTokenEntity tokenEntity = refreshTokenRepository.findByToken(hashRefreshToken(request.refreshToken()))
                 .orElseThrow(() -> new AuthException("Refresh token не найден"));
         tokenEntity.setRevoked(true);
         refreshTokenRepository.save(tokenEntity);
@@ -78,7 +81,7 @@ public class AuthService {
 
         RefreshTokenEntity refreshTokenEntity = new RefreshTokenEntity();
         refreshTokenEntity.setUser(user);
-        refreshTokenEntity.setToken(refreshToken);
+        refreshTokenEntity.setToken(hashRefreshToken(refreshToken));
         refreshTokenEntity.setExpiresAt(Instant.now().plusSeconds(refreshExpirationSec));
         refreshTokenEntity.setRevoked(false);
         refreshTokenRepository.save(refreshTokenEntity);
@@ -90,5 +93,18 @@ public class AuthService {
         byte[] randomBytes = new byte[48];
         secureRandom.nextBytes(randomBytes);
         return Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
+    }
+
+    private String hashRefreshToken(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            throw new AuthException("Refresh token не передан");
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(refreshToken.getBytes(StandardCharsets.UTF_8));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 недоступен", e);
+        }
     }
 }

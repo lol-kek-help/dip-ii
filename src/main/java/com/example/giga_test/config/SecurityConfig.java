@@ -38,7 +38,7 @@ public class SecurityConfig {
                         .requestMatchers("/sla/**").hasAnyRole("OPERATOR", "ADMIN")
                         .requestMatchers("/users/**").authenticated()
                         .requestMatchers("/tickets/**").authenticated()
-                        .requestMatchers("/task/**").authenticated()
+                        .requestMatchers("/notifications/**").authenticated()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
                 .build();

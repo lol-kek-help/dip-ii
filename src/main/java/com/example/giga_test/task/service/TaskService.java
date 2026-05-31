@@ -1,21 +1,32 @@
 package com.example.giga_test.task.service;
 
+import com.example.giga_test.ai.dto.AiDtos;
+import com.example.giga_test.ai.service.AiService;
+import com.example.giga_test.ai.service.EmbeddingService;
 import com.example.giga_test.audit.entity.AuditLog;
 import com.example.giga_test.audit.repository.AuditLogRepository;
 import com.example.giga_test.auth.repository.UserRepository;
-import com.example.giga_test.ai.service.AiService;
-import com.example.giga_test.model.Category;
-import com.example.giga_test.model.Priority;
-import com.example.giga_test.model.RoleName;
-import com.example.giga_test.model.Status;
-import com.example.giga_test.model.User;
-import com.example.giga_test.model.Task;
+import com.example.giga_test.common.dto.PageResponse;
+import com.example.giga_test.model.*;
+import com.example.giga_test.notification.service.NotificationService;
 import com.example.giga_test.sla.service.SlaService;
 import com.example.giga_test.task.dto.CreateTaskRequest;
 import com.example.giga_test.task.dto.TaskSearchFilter;
 import com.example.giga_test.task.entity.TaskEntity;
 import com.example.giga_test.task.repository.TaskRepository;
+import com.example.giga_test.ticket.dto.*;
+import com.example.giga_test.ticket.entity.AiRecommendation;
+import com.example.giga_test.ticket.entity.TicketComment;
+import com.example.giga_test.ticket.entity.TicketStatusHistory;
+import com.example.giga_test.ticket.repository.AiRecommendationRepository;
+import com.example.giga_test.ticket.repository.TicketCommentRepository;
+import com.example.giga_test.ticket.repository.TicketStatusHistoryRepository;
+import com.example.giga_test.user.dto.UserSummaryDto;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
@@ -27,43 +38,71 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 @Service
 public class TaskService {
     private static final Logger log = LoggerFactory.getLogger(TaskService.class);
+    private static final int DEFAULT_PAGE_SIZE = 10;
+    private static final int MAX_PAGE_SIZE = 100;
+
     private final TaskRepository repository;
     private final UserRepository userRepository;
     private final AuditLogRepository auditLogRepository;
     private final SlaService slaService;
     private final AiService aiService;
+    private final EmbeddingService embeddingService;
+    private final TicketCommentRepository commentRepository;
+    private final TicketStatusHistoryRepository statusHistoryRepository;
+    private final AiRecommendationRepository aiRecommendationRepository;
+    private final NotificationService notificationService;
+    private final ObjectMapper objectMapper;
 
-    public TaskService(TaskRepository repository, UserRepository userRepository, AuditLogRepository auditLogRepository, SlaService slaService, AiService aiService) {
+    public TaskService(TaskRepository repository, UserRepository userRepository, AuditLogRepository auditLogRepository,
+                       SlaService slaService, AiService aiService, EmbeddingService embeddingService,
+                       TicketCommentRepository commentRepository, TicketStatusHistoryRepository statusHistoryRepository,
+                       AiRecommendationRepository aiRecommendationRepository, NotificationService notificationService,
+                       ObjectMapper objectMapper) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.auditLogRepository = auditLogRepository;
         this.slaService = slaService;
         this.aiService = aiService;
+        this.embeddingService = embeddingService;
+        this.commentRepository = commentRepository;
+        this.statusHistoryRepository = statusHistoryRepository;
+        this.aiRecommendationRepository = aiRecommendationRepository;
+        this.notificationService = notificationService;
+        this.objectMapper = objectMapper;
     }
 
-    public List<Task> searchTaskByFilter(TaskSearchFilter filter) {
-        int pageSize = filter.pageSize() != null ? filter.pageSize() : 10;
-        int pageNumber = filter.pageNumber() != null ? filter.pageNumber() : 0;
+    public PageResponse<Task> searchTaskByFilter(TaskSearchFilter filter) {
+        int pageSize = normalizePageSize(filter.pageSize());
+        int pageNumber = normalizePageNumber(filter.pageNumber());
 
         String requestedSortBy = filter.sortBy() == null ? "createdAt" : filter.sortBy();
         String sortProperty = switch (requestedSortBy) {
-            case "createdAt", "updatedAt", "resolutionDeadline", "priority", "status" -> requestedSortBy;
+            case "createdAt", "updatedAt", "resolutionDeadline", "priority", "status", "category" -> requestedSortBy;
             default -> "createdAt";
         };
         Sort.Direction direction = "asc".equalsIgnoreCase(filter.sortDir()) ? Sort.Direction.ASC : Sort.Direction.DESC;
 
         var pageable = PageRequest.of(pageNumber, pageSize, Sort.by(direction, sortProperty));
         User currentUser = currentUser();
-        Long effectiveRequester = currentUser.getRole() == RoleName.USER ? currentUser.getId() : filter.requester();
+        Long effectiveRequester = currentUser.getRole() == RoleName.USER ? null : filter.requester();
 
         Specification<TaskEntity> spec = (root, query, cb) -> cb.conjunction();
+        if (currentUser.getRole() == RoleName.USER) {
+            spec = spec.and((r, q, cb) -> cb.or(
+                    cb.equal(r.get("requester").get("id"), currentUser.getId()),
+                    cb.equal(r.get("createdBy"), currentUser.getUsername())
+            ));
+        }
         if (filter.assignedTo() != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("assignedTo").get("id"), filter.assignedTo()));
         if (effectiveRequester != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("requester").get("id"), effectiveRequester));
         if (filter.status() != null) spec = spec.and((r, q, cb) -> cb.equal(r.get("status"), filter.status()));
@@ -74,8 +113,8 @@ public class TaskService {
         if (filter.deadlineFrom() != null) spec = spec.and((r, q, cb) -> cb.greaterThanOrEqualTo(r.get("resolutionDeadline"), filter.deadlineFrom()));
         if (filter.deadlineTo() != null) spec = spec.and((r, q, cb) -> cb.lessThanOrEqualTo(r.get("resolutionDeadline"), filter.deadlineTo()));
 
-        Page<TaskEntity> allEntitys = repository.findAll(spec, pageable);
-        return allEntitys.stream().map(this::entityToTask).toList();
+        Page<TaskEntity> page = repository.findAll(spec, pageable);
+        return new PageResponse<>(page.stream().map(this::entityToTask).toList(), pageNumber, pageSize, page.getTotalElements(), page.getTotalPages());
     }
 
     public Task getTaskByID(Long id) {
@@ -85,10 +124,7 @@ public class TaskService {
     @Transactional
     public Task createTask(CreateTaskRequest request) {
         User currentUser = currentUser();
-        Long requesterId = currentUser.getRole() == RoleName.USER ? currentUser.getId() : request.requesterId();
-        if (requesterId == null) {
-            throw new IllegalArgumentException("Инициатор обращения обязателен");
-        }
+        Long requesterId = request.requesterId() == null ? currentUser.getId() : request.requesterId();
         var requester = userRepository.findById(requesterId)
                 .orElseThrow(() -> new EntityNotFoundException("Инициатор не найден"));
 
@@ -98,7 +134,6 @@ public class TaskService {
         }
 
         TaskEntity entityToSave = new TaskEntity();
-        entityToSave.setId(null);
         entityToSave.setTitle(request.title());
         entityToSave.setDescription(request.description());
         entityToSave.setPriority(request.priority() == null ? Priority.MEDIUM : request.priority());
@@ -108,57 +143,209 @@ public class TaskService {
         entityToSave.setCreatedAt(now);
         entityToSave.setResolutionDeadline(request.resolutionDeadline());
         entityToSave.setUpdatedAt(now);
+        entityToSave.setCreatedBy(currentUser.getUsername());
+        entityToSave.setUpdatedBy(currentUser.getUsername());
 
         TaskEntity savedEntity = repository.save(entityToSave);
         slaService.ensureForTicket(savedEntity);
-        writeAudit(savedEntity, "CREATE", "Создан тикет");
+        embeddingService.upsertTaskEmbedding(savedEntity);
+        writeStatusHistory(savedEntity, null, Status.NEW, "Создано обращение", currentUser);
+        writeAudit(savedEntity, "CREATE", "Создано обращение", null, snapshot(savedEntity), currentUser);
+        notificationService.notify(requester, "Обращение создано", "Создано обращение #" + savedEntity.getId() + ": " + savedEntity.getTitle());
         return entityToTask(savedEntity);
     }
 
     @Transactional
     public Task changeStatus(Long id, Status newStatus, String reason) {
         requireOperatorOrAdmin();
+        if ((newStatus == Status.ESCALATED || newStatus == Status.CLOSED) && (reason == null || reason.isBlank())) {
+            throw new IllegalArgumentException("Комментарий обязателен для закрытия или эскалации обращения");
+        }
+        User actor = currentUser();
         TaskEntity taskEntity = getEntity(id);
-        validateTransition(taskEntity.getStatus(), newStatus);
+        Status oldStatus = taskEntity.getStatus();
+        validateTransition(oldStatus, newStatus);
+        String before = snapshot(taskEntity);
         taskEntity.setStatus(newStatus);
         taskEntity.setUpdatedAt(LocalDateTime.now());
+        taskEntity.setUpdatedBy(actor.getUsername());
         TaskEntity saved = repository.save(taskEntity);
         slaService.onStatusChange(saved, newStatus);
-        writeAudit(saved, "STATUS_CHANGE", "Статус: " + newStatus + (reason == null ? "" : "; reason=" + reason));
+        writeStatusHistory(saved, oldStatus, newStatus, reason, actor);
+        writeAudit(saved, "STATUS_CHANGE", "Статус: " + oldStatus + " -> " + newStatus + "; reason=" + reason, before, snapshot(saved), actor);
+        notifyParticipants(saved, "Статус обращения изменён", "Обращение #" + saved.getId() + " переведено в статус " + newStatus);
         return entityToTask(saved);
     }
 
     @Transactional
     public Task assign(Long id, Long assigneeId) {
         requireOperatorOrAdmin();
+        User actor = currentUser();
         TaskEntity taskEntity = getEntity(id);
+        String before = snapshot(taskEntity);
         var assignee = userRepository.findById(assigneeId).orElseThrow(() -> new EntityNotFoundException("Исполнитель не найден"));
+        if (assignee.getRole() != RoleName.OPERATOR && assignee.getRole() != RoleName.ADMIN) {
+            throw new IllegalArgumentException("Исполнителем может быть только оператор или администратор");
+        }
+        Status oldStatus = taskEntity.getStatus();
         taskEntity.setAssignedTo(assignee);
         if (taskEntity.getStatus() == Status.NEW || taskEntity.getStatus() == Status.UNASSIGNED) {
             taskEntity.setStatus(Status.ASSIGNED);
         }
         taskEntity.setUpdatedAt(LocalDateTime.now());
+        taskEntity.setUpdatedBy(actor.getUsername());
         TaskEntity saved = repository.save(taskEntity);
         slaService.onStatusChange(saved, saved.getStatus());
-        writeAudit(saved, "ASSIGN", "Назначен исполнитель id=" + assigneeId);
+        if (oldStatus != saved.getStatus()) writeStatusHistory(saved, oldStatus, saved.getStatus(), "Назначен исполнитель", actor);
+        writeAudit(saved, "ASSIGN", "Назначен исполнитель id=" + assigneeId, before, snapshot(saved), actor);
+        notificationService.notify(assignee, "Вам назначено обращение", "Обращение #" + saved.getId() + ": " + saved.getTitle());
+        notifyRequester(saved, "Обращение назначено", "Обращение #" + saved.getId() + " назначено исполнителю");
         return entityToTask(saved);
     }
 
     @Transactional
     public Task escalate(Long id, String reason) {
-        return changeStatus(id, Status.ESCALATED, reason == null ? "Эскалация" : reason);
+        if (reason == null || reason.isBlank()) throw new IllegalArgumentException("Комментарий обязателен для эскалации обращения");
+        return changeStatus(id, Status.ESCALATED, reason);
     }
 
     @Transactional
     public Task close(Long id, String resolutionComment) {
         requireOperatorOrAdmin();
+        if (resolutionComment == null || resolutionComment.isBlank()) throw new IllegalArgumentException("Комментарий обязателен для закрытия обращения");
+        User actor = currentUser();
         TaskEntity taskEntity = getEntity(id);
+        String before = snapshot(taskEntity);
         taskEntity.setResolutionComment(resolutionComment);
         taskEntity.setUpdatedAt(LocalDateTime.now());
+        taskEntity.setUpdatedBy(actor.getUsername());
         repository.save(taskEntity);
-        return changeStatus(id, Status.CLOSED, "Закрыт");
+        writeAudit(taskEntity, "RESOLUTION_COMMENT", "Комментарий решения обновлён", before, snapshot(taskEntity), actor);
+        return changeStatus(id, Status.CLOSED, resolutionComment);
     }
 
+    @Transactional
+    public Task updateClassification(Long id, Category category, Priority priority) {
+        requireOperatorOrAdmin();
+        User actor = currentUser();
+        TaskEntity taskEntity = getEntity(id);
+        String before = snapshot(taskEntity);
+        boolean changed = !Objects.equals(taskEntity.getCategory(), category) || !Objects.equals(taskEntity.getPriority(), priority);
+        taskEntity.setCategory(category);
+        taskEntity.setPriority(priority);
+        taskEntity.setUpdatedAt(LocalDateTime.now());
+        taskEntity.setUpdatedBy(actor.getUsername());
+        TaskEntity saved = repository.save(taskEntity);
+        embeddingService.upsertTaskEmbedding(saved);
+        writeAudit(saved, changed ? "CLASSIFICATION_UPDATE" : "CLASSIFICATION_CONFIRM", "Категория=" + category + "; приоритет=" + priority, before, snapshot(saved), actor);
+        return entityToTask(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public List<TicketCommentDto> comments(Long id) {
+        TaskEntity task = getEntity(id);
+        User current = currentUser();
+        boolean canSeeInternal = current.getRole() == RoleName.OPERATOR || current.getRole() == RoleName.ADMIN;
+        return commentRepository.findAllByTicketIdOrderByCreatedAtAsc(task.getId()).stream()
+                .filter(c -> canSeeInternal || !c.isInternalComment())
+                .map(this::toCommentDto)
+                .toList();
+    }
+
+    @Transactional
+    public TicketCommentDto addComment(Long id, CreateTicketCommentRequest request) {
+        TaskEntity ticket = getEntity(id);
+        User actor = currentUser();
+        boolean internal = request.internalComment();
+        if (internal && actor.getRole() != RoleName.OPERATOR && actor.getRole() != RoleName.ADMIN) {
+            throw new AccessDeniedException("Внутренние комментарии доступны только оператору и администратору");
+        }
+        TicketComment comment = new TicketComment();
+        comment.setTicket(ticket);
+        comment.setAuthor(actor);
+        comment.setCommentText(request.commentText());
+        comment.setInternalComment(internal);
+        comment.setCreatedAt(LocalDateTime.now());
+        comment.setUpdatedAt(LocalDateTime.now());
+        comment.setCreatedBy(actor.getUsername());
+        comment.setUpdatedBy(actor.getUsername());
+        TicketComment saved = commentRepository.save(comment);
+        writeAudit(ticket, "COMMENT_ADD", (internal ? "Внутренний" : "Публичный") + " комментарий добавлен", null, request.commentText(), actor);
+        if (!internal) notifyParticipants(ticket, "Новый комментарий", "В обращении #" + ticket.getId() + " добавлен комментарий");
+        return toCommentDto(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public List<TicketStatusHistoryDto> statusHistory(Long id) {
+        TaskEntity ticket = getEntity(id);
+        return statusHistoryRepository.findAllByTicketIdOrderByCreatedAtAsc(ticket.getId()).stream().map(this::toHistoryDto).toList();
+    }
+
+    @Transactional
+    public SavedAiRecommendationDto saveAiRecommendation(Long id) {
+        requireOperatorOrAdmin();
+        User actor = currentUser();
+        TaskEntity ticket = getEntity(id);
+        AiDtos.RecommendResponse response = aiService.recommend((ticket.getTitle() + "\n" + ticket.getDescription()).trim());
+        AiRecommendation entity = new AiRecommendation();
+        entity.setTicket(ticket);
+        entity.setRecommendation(response.recommendation());
+        entity.setStepsJson(toJson(response.steps()));
+        if (response.explainability() != null) {
+            entity.setMode(response.explainability().mode());
+            entity.setSourcesJson(toJson(response.explainability().sources()));
+            entity.setLlmStatus(response.explainability().llmStatus());
+            entity.setRawModelOutput(response.explainability().rawModelOutput());
+        }
+        entity.setCreatedByUser(actor);
+        entity.setCreatedAt(LocalDateTime.now());
+        AiRecommendation saved = aiRecommendationRepository.save(entity);
+        writeAudit(ticket, "AI_RECOMMENDATION_SAVE", "AI-рекомендация сохранена", null, response.recommendation(), actor);
+        return toAiRecommendationDto(saved);
+    }
+
+    @Transactional(readOnly = true)
+    public List<SavedAiRecommendationDto> aiRecommendations(Long id) {
+        TaskEntity ticket = getEntity(id);
+        return aiRecommendationRepository.findAllByTicketIdOrderByCreatedAtDesc(ticket.getId()).stream().map(this::toAiRecommendationDto).toList();
+    }
+
+    @Transactional
+    public SavedAiRecommendationDto evaluateAiRecommendation(Long ticketId, Long recommendationId, AiRecommendationFeedbackRequest request) {
+        requireOperatorOrAdmin();
+        User actor = currentUser();
+        TaskEntity ticket = getEntity(ticketId);
+        AiRecommendation recommendation = aiRecommendationRepository.findById(recommendationId)
+                .orElseThrow(() -> new EntityNotFoundException("AI-рекомендация не найдена: " + recommendationId));
+        if (!recommendation.getTicket().getId().equals(ticket.getId())) {
+            throw new EntityNotFoundException("AI-рекомендация не найдена: " + recommendationId);
+        }
+        recommendation.setAccepted(request.accepted());
+        recommendation.setUsefulnessScore(request.usefulnessScore());
+        recommendation.setFeedbackComment(request.feedbackComment());
+        recommendation.setEvaluatedByUser(actor);
+        recommendation.setEvaluatedAt(LocalDateTime.now());
+        AiRecommendation saved = aiRecommendationRepository.save(recommendation);
+        writeAudit(ticket, "AI_RECOMMENDATION_EVALUATE", "accepted=" + request.accepted() + "; score=" + request.usefulnessScore(), null, request.feedbackComment(), actor);
+        return toAiRecommendationDto(saved);
+    }
+
+    public Task aiProcessingTask(Long id) {
+        requireOperatorOrAdmin();
+        TaskEntity taskEntity = getEntity(id);
+        if(taskEntity.getStatus() == Status.CLOSED){
+            throw new IllegalStateException("Cannot approve" + taskEntity.getStatus());
+        }
+        Task processedTask = sendToAI(entityToTask(taskEntity));
+        return updateClassification(id, processedTask.getCategory(), processedTask.getPriority());
+    }
+
+    private Task sendToAI(Task task) {
+        var result = aiService.classify((task.getTitle() + " " + task.getDescription()).trim());
+        Category category = Category.valueOf(result.category());
+        Priority priority = Priority.valueOf(result.priority());
+        return task.toBuilder().category(category).priority(priority).build();
+    }
 
     private User currentUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -188,64 +375,87 @@ public class TaskService {
     private TaskEntity getEntity(Long id) {
         TaskEntity task = repository.findById(id).orElseThrow(() -> new EntityNotFoundException("No that id = " + id));
         User currentUser = currentUser();
-        if (currentUser.getRole() == RoleName.USER && (task.getRequester() == null || !currentUser.getId().equals(task.getRequester().getId()))) {
-            throw new EntityNotFoundException("No that id = " + id);
+        if (currentUser.getRole() == RoleName.USER) {
+            boolean requesterMatches = task.getRequester() != null && currentUser.getId().equals(task.getRequester().getId());
+            boolean creatorMatches = currentUser.getUsername().equals(task.getCreatedBy());
+            if (!requesterMatches && !creatorMatches) {
+                throw new EntityNotFoundException("No that id = " + id);
+            }
         }
         return task;
     }
 
-    @Transactional
-    public Task updateClassification(Long id, Category category, Priority priority) {
-        requireOperatorOrAdmin();
-        TaskEntity taskEntity = getEntity(id);
-        taskEntity.setCategory(category);
-        taskEntity.setPriority(priority);
-        taskEntity.setUpdatedAt(LocalDateTime.now());
-        TaskEntity saved = repository.save(taskEntity);
-        writeAudit(saved, "CLASSIFICATION_UPDATE", "Категория=" + category + "; приоритет=" + priority);
-        return entityToTask(saved);
+    private int normalizePageSize(Integer requested) {
+        if (requested == null) return DEFAULT_PAGE_SIZE;
+        if (requested < 1) return DEFAULT_PAGE_SIZE;
+        return Math.min(requested, MAX_PAGE_SIZE);
     }
 
-    private void writeAudit(TaskEntity ticket, String action, String details) {
-        AuditLog log = new AuditLog();
-        log.setAction(action);
-        log.setEntityType("TICKET");
-        log.setEntityId(String.valueOf(ticket.getId()));
-        log.setDetails(details);
-        log.setCreatedAt(LocalDateTime.now());
-        log.setUpdatedAt(LocalDateTime.now());
-        auditLogRepository.save(log);
+    private int normalizePageNumber(Integer requested) {
+        if (requested == null || requested < 0) return 0;
+        return requested;
     }
 
-    public Task aiProcessingTask(Long id) {
-        requireOperatorOrAdmin();
-        TaskEntity taskEntity = getEntity(id);
-        if(taskEntity.getStatus() == Status.CLOSED){
-            throw new IllegalStateException("Cannot approve" + taskEntity.getStatus());
+    private void writeStatusHistory(TaskEntity ticket, Status from, Status to, String reason, User actor) {
+        TicketStatusHistory history = new TicketStatusHistory();
+        history.setTicket(ticket);
+        history.setFromStatus(from);
+        history.setToStatus(to);
+        history.setReason(reason);
+        history.setChangedBy(actor);
+        history.setCreatedAt(LocalDateTime.now());
+        statusHistoryRepository.save(history);
+    }
+
+    private void writeAudit(TaskEntity ticket, String action, String details, String before, String after, User actor) {
+        AuditLog audit = new AuditLog();
+        audit.setActor(actor);
+        audit.setAction(action);
+        audit.setEntityType("TICKET");
+        audit.setEntityId(String.valueOf(ticket.getId()));
+        audit.setDetails(details);
+        audit.setBeforeValue(before);
+        audit.setAfterValue(after);
+        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attrs != null) {
+            HttpServletRequest request = attrs.getRequest();
+            audit.setIpAddress(clientIp(request));
+            audit.setUserAgent(request.getHeader("User-Agent"));
         }
-        Task processedTask = sendToAI(entityToTask(taskEntity));
-        TaskEntity entityToSave = taskToEntity(processedTask);
-        entityToSave.setId(taskEntity.getId());
-        TaskEntity savedEntity = repository.save(entityToSave);
-        return entityToTask(savedEntity);
+        audit.setCreatedAt(LocalDateTime.now());
+        audit.setUpdatedAt(LocalDateTime.now());
+        audit.setCreatedBy(actor == null ? null : actor.getUsername());
+        audit.setUpdatedBy(actor == null ? null : actor.getUsername());
+        auditLogRepository.save(audit);
     }
 
-    private Task sendToAI(Task task) {
-        var result = aiService.classify((task.getTitle() + " " + task.getDescriprion()).trim());
-        Category category;
-        try {
-            category = Category.valueOf(result.category());
-        } catch (Exception ex) {
-            category = Category.GENERAL;
-        }
-        return task.toBuilder().category(category).build();
+    private String clientIp(HttpServletRequest request) {
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        if (forwardedFor != null && !forwardedFor.isBlank()) return forwardedFor.split(",")[0].trim();
+        return request.getRemoteAddr();
     }
+
+    private void notifyParticipants(TaskEntity ticket, String subject, String message) {
+        notifyRequester(ticket, subject, message);
+        if (ticket.getAssignedTo() != null && (ticket.getRequester() == null || !ticket.getAssignedTo().getId().equals(ticket.getRequester().getId()))) {
+            notificationService.notify(ticket.getAssignedTo(), subject, message);
+        }
+    }
+
+    private void notifyRequester(TaskEntity ticket, String subject, String message) {
+        notificationService.notify(ticket.getRequester(), subject, message);
+    }
+
+    private String snapshot(TaskEntity e) {
+        return "{id=" + e.getId() + ", status=" + e.getStatus() + ", category=" + e.getCategory() + ", priority=" + e.getPriority() + ", assignedTo=" + (e.getAssignedTo() == null ? null : e.getAssignedTo().getId()) + ", resolutionComment=" + e.getResolutionComment() + "}";
+    }
+
     private Task entityToTask(TaskEntity entity) {
         Task task = new Task();
         task.setId(entity.getId());
         task.setTaskNumber(entity.getTaskNumber());
         task.setTitle(entity.getTitle());
-        task.setDescriprion(entity.getDescription());
+        task.setDescription(entity.getDescription());
         task.setStatus(entity.getStatus());
         task.setPriority(entity.getPriority());
         task.setCategory(entity.getCategory());
@@ -257,21 +467,34 @@ public class TaskService {
         return task;
     }
 
-    private TaskEntity taskToEntity(Task task) {
-        TaskEntity entity = new TaskEntity();
-        entity.setId(task.getId());
-        entity.setTaskNumber(task.getTaskNumber());
-        entity.setTitle(task.getTitle());
-        entity.setDescription(task.getDescriprion());
-        entity.setStatus(task.getStatus());
-        entity.setPriority(task.getPriority());
-        entity.setCategory(task.getCategory());
-        entity.setRequester(task.getRequester());
-        entity.setAssignedTo(task.getAssignedTo());
-        entity.setCreatedAt(task.getCreatedAt());
-        entity.setResolutionDeadline(task.getResolutionDeadline());
-        entity.setResolutionComment(task.getResolutionComment());
-        return entity;
+    private TicketCommentDto toCommentDto(TicketComment comment) {
+        return new TicketCommentDto(comment.getId(), comment.getTicket().getId(), UserSummaryDto.from(comment.getAuthor()), comment.getCommentText(), comment.isInternalComment(), comment.getCreatedAt(), comment.getUpdatedAt());
     }
 
+    private TicketStatusHistoryDto toHistoryDto(TicketStatusHistory h) {
+        return new TicketStatusHistoryDto(h.getId(), h.getTicket().getId(), h.getFromStatus(), h.getToStatus(), h.getReason(), h.getChangedBy() == null ? null : UserSummaryDto.from(h.getChangedBy()), h.getCreatedAt());
+    }
+
+    private SavedAiRecommendationDto toAiRecommendationDto(AiRecommendation r) {
+        return new SavedAiRecommendationDto(r.getId(), r.getTicket().getId(), r.getRecommendation(), fromJsonList(r.getStepsJson()), r.getMode(), fromJsonList(r.getSourcesJson()), r.getLlmStatus(), r.getRawModelOutput(), r.getAccepted(), r.getUsefulnessScore(), r.getFeedbackComment(), r.getCreatedByUser() == null ? null : UserSummaryDto.from(r.getCreatedByUser()), r.getEvaluatedByUser() == null ? null : UserSummaryDto.from(r.getEvaluatedByUser()), r.getCreatedAt(), r.getEvaluatedAt());
+    }
+
+    private String toJson(List<String> values) {
+        try {
+            return objectMapper.writeValueAsString(values == null ? List.of() : values);
+        } catch (JsonProcessingException e) {
+            log.warn("Cannot serialize list", e);
+            return "[]";
+        }
+    }
+
+    private List<String> fromJsonList(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            return objectMapper.readValue(json, new TypeReference<>() {});
+        } catch (Exception e) {
+            log.warn("Cannot deserialize list", e);
+            return List.of();
+        }
+    }
 }
