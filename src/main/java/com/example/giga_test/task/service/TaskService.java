@@ -150,8 +150,10 @@ public class TaskService {
         slaService.ensureForTicket(savedEntity);
         embeddingService.upsertTaskEmbedding(savedEntity);
         writeStatusHistory(savedEntity, null, Status.NEW, "Создано обращение", currentUser);
-        writeAudit(savedEntity, "CREATE", "Создано обращение", null, snapshot(savedEntity), currentUser);
-        notificationService.notify(requester, "Обращение создано", "Создано обращение #" + savedEntity.getId() + ": " + savedEntity.getTitle());
+        writeAudit(savedEntity, "CREATE", "Создано обращение", null,
+                snapshot(savedEntity), currentUser);
+        notificationService.notify(requester, "Обращение создано",
+                "Создано обращение #" + savedEntity.getId() + ": " + savedEntity.getTitle());
         return entityToTask(savedEntity);
     }
 
@@ -161,6 +163,7 @@ public class TaskService {
         if ((newStatus == Status.ESCALATED || newStatus == Status.CLOSED) && (reason == null || reason.isBlank())) {
             throw new IllegalArgumentException("Комментарий обязателен для закрытия или эскалации обращения");
         }
+        //получение сущности, сохранение старого статуса
         User actor = currentUser();
         TaskEntity taskEntity = getEntity(id);
         Status oldStatus = taskEntity.getStatus();
@@ -169,6 +172,7 @@ public class TaskService {
         taskEntity.setStatus(newStatus);
         taskEntity.setUpdatedAt(LocalDateTime.now());
         taskEntity.setUpdatedBy(actor.getUsername());
+        //сохранение, обновление SLA, запись истории и аудита
         TaskEntity saved = repository.save(taskEntity);
         slaService.onStatusChange(saved, newStatus);
         writeStatusHistory(saved, oldStatus, newStatus, reason, actor);
@@ -187,6 +191,7 @@ public class TaskService {
         if (assignee.getRole() != RoleName.OPERATOR && assignee.getRole() != RoleName.ADMIN) {
             throw new IllegalArgumentException("Исполнителем может быть только оператор или администратор");
         }
+        // получение сущности, сохранение старого статуса
         Status oldStatus = taskEntity.getStatus();
         taskEntity.setAssignedTo(assignee);
         if (taskEntity.getStatus() == Status.NEW || taskEntity.getStatus() == Status.UNASSIGNED) {
@@ -362,7 +367,7 @@ public class TaskService {
             throw new AccessDeniedException("Недостаточно прав для выполнения операции");
         }
     }
-
+    //проверка перед сменой статуса
     private void validateTransition(Status current, Status target) {
         if (current == Status.CLOSED || current == Status.CANCELED) {
             throw new IllegalStateException("Нельзя менять финальный статус " + current);
