@@ -6,6 +6,7 @@ import com.example.giga_test.model.Status;
 import com.example.giga_test.model.User;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
@@ -54,11 +55,11 @@ public class TaskEntity {
     @Column(name = "category")
     private Category category;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "requester_id", referencedColumnName = "id")
     private User requester;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "assigned_to_id", referencedColumnName = "id")
     private User assignedTo;
 

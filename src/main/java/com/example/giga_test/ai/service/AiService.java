@@ -55,17 +55,18 @@ public class AiService {
     }
 
     public SimilarResponse similar(String text) {
-        var taskItems = hybridTicketSearch(text);
-
-        var resolvedTasks = taskRepository.findAllByStatus(Status.RESOLVED);
-
-        String category = classify(text).category();
+        String category = inferCategoryForSearch(text);
         Set<String> queryHints = extractHintTokens(text, category);
         var taskVectors = embeddingService.topK("TASK", text, searchProperties.getVectorLimit()).stream()
                 .filter(scored -> scored.score() >= searchProperties.getMinRelevanceScore())
                 .toList();
+        var taskById = taskRepository.findAllById(sourceIds(taskVectors)).stream()
+                .collect(Collectors.toMap(TaskEntity::getId, t -> t));
+
+        var taskItems = hybridTicketSearch(text, category, taskVectors);
+
         var resolvedCases = taskVectors.stream()
-                .map(scored -> mapResolvedCase(scored.record().getSourceId(), scored.score(), text, resolvedTasks))
+                .map(scored -> mapResolvedCase(scored.record().getSourceId(), scored.score(), text, taskById))
                 .filter(Objects::nonNull)
                 .filter(rc -> containsHintToken(queryHints, rc.title() + " " + rc.resolutionComment()))
                 .sorted(Comparator.comparingDouble(ResolvedCaseItem::fitPercent).reversed())
@@ -73,18 +74,18 @@ public class AiService {
                 .toList();
         if (resolvedCases.isEmpty()) {
             resolvedCases = taskVectors.stream()
-                    .map(scored -> mapResolvedCase(scored.record().getSourceId(), scored.score(), text, resolvedTasks))
+                    .map(scored -> mapResolvedCase(scored.record().getSourceId(), scored.score(), text, taskById))
                     .filter(Objects::nonNull)
                     .sorted(Comparator.comparingDouble(ResolvedCaseItem::fitPercent).reversed())
                     .limit(searchProperties.getRagLimit())
                     .toList();
         }
 
-        var kbArticles = articleRepository.findAll();
-        var articleById = kbArticles.stream().collect(Collectors.toMap(a -> a.getId(), a -> a));
         var articleVectors = embeddingService.topK("KB", text, searchProperties.getVectorLimit()).stream()
                 .filter(scored -> scored.score() >= searchProperties.getMinRelevanceScore())
                 .toList();
+        var articleById = articleRepository.findAllById(sourceIds(articleVectors)).stream()
+                .collect(Collectors.toMap(a -> a.getId(), a -> a));
         var articles = articleVectors.stream()
                 .map(scored -> mapArticleHit(scored.score(), text, queryHints, articleById.get(scored.record().getSourceId()), true))
                 .filter(Objects::nonNull)
@@ -104,7 +105,7 @@ public class AiService {
                 new Explainability("RAG_RETRIEVAL", List.of("resolved_tickets", "knowledge_base", "vector_records"), "N/A", null, null));
     }
 
-    private List<SimilarItem> hybridTicketSearch(String query) {
+    private List<SimilarItem> hybridTicketSearch(String query, String category, List<EmbeddingService.ScoredVectorRecord> taskVectors) {
         var fts = jdbcTemplate.query(
                 //fts поиск похожего
                 """ 
@@ -123,12 +124,11 @@ public class AiService {
                 query, query, searchProperties.getFtsLimit()
         );
 
-        var vector = embeddingService.topK("TASK", query, searchProperties.getVectorLimit()).stream()
-                .filter(v -> v.score() >= searchProperties.getMinRelevanceScore())
+        var vector = taskVectors.stream()
                 .map(v -> new SimilarItem(v.record().getSourceId(), "", Math.max(0.0, v.score())))
                 .toList();
 
-        final Set<String> retrievalHints = extractHintTokens(query, classify(query).category());
+        final Set<String> retrievalHints = extractHintTokens(query, category);
         var tokenMatches = findByHintTokens(retrievalHints);
 
         Map<Long, Double> merged = new HashMap<>();
@@ -145,7 +145,6 @@ public class AiService {
         Map<Long, TaskEntity> taskMap = taskRepository.findAllById(merged.keySet()).stream()
                 .collect(Collectors.toMap(TaskEntity::getId, t -> t));
 
-        String category = classify(query).category();
         final Set<String> queryHints = extractHintTokens(query, category);
         var pre = merged.entrySet().stream()
                 .map(e -> {
@@ -187,19 +186,21 @@ public class AiService {
 
     private List<SimilarItem> findByHintTokens(Set<String> hints) {
         if (hints == null || hints.isEmpty()) return List.of();
-        String[] patterns = hints.stream().map(h -> "%" + h + "%").toArray(String[]::new);
-        return taskRepository.findAll().stream()
-                .filter(t -> {
-                    String text = (t.getTitle() + " " + (t.getDescription() == null ? "" : t.getDescription())).toLowerCase(Locale.ROOT);
-                    for (String p : patterns) {
-                        String token = p.substring(1, p.length() - 1);
-                        if (text.contains(token)) return true;
-                    }
-                    return false;
-                })
-                .map(t -> new SimilarItem(t.getId(), t.getTitle(), 1.0))
-                .limit(30)
-                .toList();
+        var tokens = hints.stream().filter(h -> h != null && !h.isBlank()).limit(5).toList();
+        if (tokens.isEmpty()) return List.of();
+
+        String where = tokens.stream()
+                .map(ignored -> "lower(coalesce(title,'') || ' ' || coalesce(description,'')) LIKE ?")
+                .collect(Collectors.joining(" OR "));
+        List<Object> params = new ArrayList<>();
+        tokens.forEach(token -> params.add("%" + token.toLowerCase(Locale.ROOT) + "%"));
+        params.add(30);
+
+        return jdbcTemplate.query(
+                "SELECT id, title FROM tasks WHERE " + where + " LIMIT ?",
+                (rs, rn) -> new SimilarItem(rs.getLong("id"), rs.getString("title"), 1.0),
+                params.toArray()
+        );
     }
 
     private Set<String> extractHintTokens(String text, String category) {
@@ -221,6 +222,12 @@ public class AiService {
             if (c.contains(h)) return true;
         }
         return false;
+    }
+
+    private Set<Long> sourceIds(List<EmbeddingService.ScoredVectorRecord> vectors) {
+        return vectors.stream()
+                .map(v -> v.record().getSourceId())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private String mapArticleHit(double vectorScore, String queryText, Set<String> queryHints, com.example.giga_test.ai.entity.KnowledgeBaseArticle article, boolean requireHints) {
@@ -290,6 +297,17 @@ public class AiService {
         return new AiQualityReportDto(total, evaluated, accepted, acceptanceRate, avgScore, classificationChanges, classificationChangeRate);
     }
 
+    private String inferCategoryForSearch(String text) {
+        String lc = text == null ? "" : text.toLowerCase(Locale.ROOT);
+        if (lc.contains("доступ") || lc.contains("vpn") || lc.contains("впн") || lc.contains("парол") || lc.contains("mfa")) return "ACCESS";
+        if (lc.contains("почт") || lc.contains("email") || lc.contains("mail") || lc.contains("outlook") || lc.contains("exchange")) return "EMAIL";
+        if (lc.contains("сеть") || lc.contains("dns") || lc.contains("proxy")) return "NETWORK";
+        if (lc.contains("принтер") || lc.contains("ноутбук") || lc.contains("пк")) return "WORKPLACE";
+        if (lc.contains("1с") || lc.contains("sap") || lc.contains("erp")) return "ERP";
+        if (lc.contains("инцид") || lc.contains("простой")) return "INCIDENT";
+        return "GENERAL";
+    }
+
     private double score(String a, String b) {
         Set<String> sa = new HashSet<>(Arrays.asList(a.toLowerCase(Locale.ROOT).split("\\s+")));
         Set<String> sb = new HashSet<>(Arrays.asList(b.toLowerCase(Locale.ROOT).split("\\s+")));
@@ -300,8 +318,9 @@ public class AiService {
 
     private double roundToTwoDecimals(double value) { return Math.round(value * 100.0) / 100.0; }
 
-    private ResolvedCaseItem mapResolvedCase(Long id, double vectorScore, String queryText, List<TaskEntity> tasks) {
-        TaskEntity task = tasks.stream().filter(t -> t.getId().equals(id)).findFirst().orElse(null);
+    private ResolvedCaseItem mapResolvedCase(Long id, double vectorScore, String queryText, Map<Long, TaskEntity> tasks) {
+        TaskEntity task = tasks.get(id);
+        if (task != null && task.getStatus() != Status.RESOLVED) return null;
         if (task == null) return null;
         double lexicalScore = score(queryText, task.getTitle() + " " + task.getDescription());
         double boosted = hybridScore(vectorScore, lexicalScore, queryText, task.getTitle() + " " + task.getDescription());
