@@ -7,7 +7,7 @@ import java.util.List;
 public class AiDtos {
     public record AiRequest(@NotBlank String text) {}
 
-    public record Explainability(String mode, List<String> sources, String llmStatus, String rawModelOutput) {}
+    public record Explainability(String mode, List<String> sources, String llmStatus, String rawModelOutput, String fallbackReason) {}
 
     public record ClassifyResponse(String category, String priority, String rationale, Explainability explainability) {}
     public record SimilarItem(Long ticketId, String title, double score) {}

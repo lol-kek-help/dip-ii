@@ -481,7 +481,24 @@ public class TaskService {
     }
 
     private SavedAiRecommendationDto toAiRecommendationDto(AiRecommendation r) {
-        return new SavedAiRecommendationDto(r.getId(), r.getTicket().getId(), r.getRecommendation(), fromJsonList(r.getStepsJson()), r.getMode(), fromJsonList(r.getSourcesJson()), r.getLlmStatus(), r.getRawModelOutput(), r.getAccepted(), r.getUsefulnessScore(), r.getFeedbackComment(), r.getCreatedByUser() == null ? null : UserSummaryDto.from(r.getCreatedByUser()), r.getEvaluatedByUser() == null ? null : UserSummaryDto.from(r.getEvaluatedByUser()), r.getCreatedAt(), r.getEvaluatedAt());
+        return new SavedAiRecommendationDto(r.getId(), r.getTicket().getId(), r.getRecommendation(), fromJsonList(r.getStepsJson()), r.getMode(), fromJsonList(r.getSourcesJson()), r.getLlmStatus(), r.getRawModelOutput(), fallbackReason(r.getRawModelOutput()), r.getAccepted(), r.getUsefulnessScore(), r.getFeedbackComment(), r.getCreatedByUser() == null ? null : UserSummaryDto.from(r.getCreatedByUser()), r.getEvaluatedByUser() == null ? null : UserSummaryDto.from(r.getEvaluatedByUser()), r.getCreatedAt(), r.getEvaluatedAt());
+    }
+
+    private String fallbackReason(String rawModelOutput) {
+        String normalized = rawModelOutput == null ? "" : rawModelOutput.toLowerCase(java.util.Locale.ROOT);
+        if (normalized.contains("429") || normalized.contains("квота") || normalized.contains("too many")) {
+            return "Сработал fallback: внешний LLM-сервис вернул ограничение частоты запросов или исчерпание квоты.";
+        }
+        if (normalized.contains("сети") || normalized.contains("dns") || normalized.contains("network")) {
+            return "Сработал fallback: внешний LLM-сервис недоступен из-за сетевой ошибки или ошибки DNS.";
+        }
+        if (normalized.contains("misconfigured") || normalized.contains("auth key")) {
+            return "Сработал fallback: не настроен ключ доступа к внешнему LLM-сервису.";
+        }
+        if (normalized.contains("temporary unavailable") || normalized.contains("manual triage") || normalized.contains("недоступ")) {
+            return "Сработал fallback: внешний LLM-сервис временно недоступен.";
+        }
+        return null;
     }
 
     private String toJson(List<String> values) {
