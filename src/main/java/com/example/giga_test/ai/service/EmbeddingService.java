@@ -16,6 +16,17 @@ public class EmbeddingService {
 
     private static final int DIM = 1024;
     private static final String LOCAL_HASH_PROVIDER = "LOCAL_HASH";
+    private static final String SEMANTIC_EXPANSION_VERSION = "SYN_V1";
+    private static final List<List<String>> SYNONYM_GROUPS = List.of(
+            List.of("email", "e-mail", "mail", "электронная почта", "почта", "почтовый ящик", "письмо", "outlook", "exchange"),
+            List.of("vpn", "впн", "virtual private network", "виртуальная частная сеть", "удаленный доступ", "удаленное подключение"),
+            List.of("машина", "автомобиль", "авто", "транспорт", "легковой автомобиль"),
+            List.of("учетная запись", "аккаунт", "пользователь", "логин", "ad", "active directory"),
+            List.of("мфа", "mfa", "2fa", "двухфакторная аутентификация", "многофакторная аутентификация"),
+            List.of("сертификат", "certificate", "cert", "ключ доступа"),
+            List.of("принтер", "печать", "печатающее устройство", "мфу"),
+            List.of("1с", "бухгалтерия", "erp", "учетная система")
+    );
 
     private final VectorRecordRepository vectorRecordRepository;
     private final LlmClient llmClient;
@@ -121,16 +132,48 @@ public class EmbeddingService {
     }
 
     private EmbeddingPayload embedPayload(String text) {
-        double[] real = llmClient.embed(text);
+        String expandedText = expandForEmbedding(text);
+        double[] real = llmClient.embed(expandedText);
         if (real != null && real.length > 0) {
             return new EmbeddingPayload(fitDimAndNormalize(real, DIM), expectedEmbeddingProvider());
         }
-        return new EmbeddingPayload(localHashEmbedding(text), LOCAL_HASH_PROVIDER);
+        return new EmbeddingPayload(localHashEmbedding(expandedText), expectedLocalProvider());
     }
 
     private String expectedEmbeddingProvider() {
         String provider = llmClient.embeddingProviderKey();
-        return provider == null || provider.isBlank() ? LOCAL_HASH_PROVIDER : provider;
+        if (provider == null || provider.isBlank() || Objects.equals(provider, LOCAL_HASH_PROVIDER)) {
+            return expectedLocalProvider();
+        }
+        return provider + ":" + SEMANTIC_EXPANSION_VERSION;
+    }
+
+    private String expectedLocalProvider() {
+        return LOCAL_HASH_PROVIDER + ":" + SEMANTIC_EXPANSION_VERSION;
+    }
+
+    private String expandForEmbedding(String text) {
+        String original = text == null ? "" : text;
+        String normalized = normalizeForSynonyms(original);
+        Set<String> expansions = new LinkedHashSet<>();
+        for (List<String> group : SYNONYM_GROUPS) {
+            boolean matched = group.stream().map(this::normalizeForSynonyms).anyMatch(normalized::contains);
+            if (matched) {
+                expansions.addAll(group);
+            }
+        }
+        if (expansions.isEmpty()) {
+            return original;
+        }
+        return original + "\nСинонимы и эквивалентные термины: " + String.join(", ", expansions);
+    }
+
+    private String normalizeForSynonyms(String text) {
+        return (text == null ? "" : text)
+                .toLowerCase(Locale.ROOT)
+                .replace('ё', 'е')
+                .replaceAll("[^\\p{IsAlphabetic}\\p{IsDigit}]+", " ")
+                .trim();
     }
 
     private double[] localHashEmbedding(String text) {
