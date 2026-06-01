@@ -63,6 +63,14 @@ public class GigaChatLlmClient implements LlmClient {
     }
 
     @Override
+    public String embeddingProviderKey() {
+        if (authKey == null || authKey.isBlank()) {
+            return LlmClient.super.embeddingProviderKey();
+        }
+        return "GIGACHAT:" + embeddingsModel;
+    }
+
+    @Override
     public double[] embed(String text) {
         if (authKey == null || authKey.isBlank()) {
             return new double[0];
