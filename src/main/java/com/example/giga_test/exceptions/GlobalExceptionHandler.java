@@ -15,7 +15,6 @@ import java.time.LocalDateTime;
 @ControllerAdvice
 public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
-
     //ошибка 500
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponseDto> handleGeneralException(Exception e){
@@ -39,7 +38,7 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponseDto("UNAUTHORIZED", "Ошибка аутентификации",
                         e.getMessage(), LocalDateTime.now()));
     }
-
+    //ошибка 403
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ErrorResponseDto> handleAccessDenied(AccessDeniedException e){
         log.warn("Access denied", e);

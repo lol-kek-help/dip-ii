@@ -75,12 +75,10 @@ public class GigaChatLlmClient implements LlmClient {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.setBearerAuth(accessToken);
-
             Map<String, Object> body = Map.of(
                     "model", embeddingsModel,
                     "input", List.of(text)
             );
-
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<Map> response = restTemplate.exchange(embeddingsUrl, HttpMethod.POST, request, Map.class);
             return extractEmbedding(response.getBody());
@@ -101,14 +99,12 @@ public class GigaChatLlmClient implements LlmClient {
     }
 
     @Override
+    //запрос llm
     public String ask(String prompt) {
         if (authKey == null || authKey.isBlank()) {
             log.warn("AI включен, но ai.llm.gigachat.auth-key пустой. Возвращаем деградированный ответ.");
             return "AI client misconfigured: empty GigaChat auth key.";
         }
-
-
-
         try {
             String accessToken = getOrRefreshAccessToken();
 
@@ -124,8 +120,8 @@ public class GigaChatLlmClient implements LlmClient {
 
             HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
             ResponseEntity<Map> response = restTemplate.exchange(apiUrl, HttpMethod.POST, request, Map.class);
-
             return extractContent(response.getBody());
+            //fallback ответ
         } catch (HttpStatusCodeException ex) {
             int status = ex.getStatusCode().value();
             log.error("Ошибка вызова GigaChat API. HTTP status={}", status, ex);

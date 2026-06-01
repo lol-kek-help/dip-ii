@@ -23,7 +23,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     public JwtAuthFilter(JwtService jwtService) {this.jwtService = jwtService;}
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
         //извлечение токена, парсинг, установка
         String header = request.getHeader("Authorization");
         if (header != null && header.startsWith("Bearer ")) {

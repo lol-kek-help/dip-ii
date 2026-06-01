@@ -20,6 +20,7 @@ import java.util.List;
 //интерфейс автоматически из DataJPA с множеством уже готовых функций
 public interface TaskRepository extends JpaRepository<TaskEntity, Long>, JpaSpecificationExecutor<TaskEntity> {
     List<TaskEntity> findAllByStatus(Status status);
+    //запрос без sql только благодаря названию
     List<TaskEntity> findTop5ByTitleContainingIgnoreCaseOrDescriptionContainingIgnoreCase(String title, String description);
     @Modifying
     @Query("""

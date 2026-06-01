@@ -80,11 +80,10 @@ public class TaskService {
         this.notificationService = notificationService;
         this.objectMapper = objectMapper;
     }
-
     public PageResponse<Task> searchTaskByFilter(TaskSearchFilter filter) {
         int pageSize = normalizePageSize(filter.pageSize());
         int pageNumber = normalizePageNumber(filter.pageNumber());
-
+        //по чему выполняется фильтрация
         String requestedSortBy = filter.sortBy() == null ? "createdAt" : filter.sortBy();
         String sortProperty = switch (requestedSortBy) {
             case "createdAt", "updatedAt", "resolutionDeadline", "priority", "status", "category" -> requestedSortBy;
@@ -95,7 +94,7 @@ public class TaskService {
         var pageable = PageRequest.of(pageNumber, pageSize, Sort.by(direction, sortProperty));
         User currentUser = currentUser();
         Long effectiveRequester = currentUser.getRole() == RoleName.USER ? null : filter.requester();
-
+        //юзеру только его заявки
         Specification<TaskEntity> spec = (root, query, cb) -> cb.conjunction();
         if (currentUser.getRole() == RoleName.USER) {
             spec = spec.and((r, q, cb) -> cb.or(
@@ -182,6 +181,7 @@ public class TaskService {
     }
 
     @Transactional
+    //назначение исполнителя
     public Task assign(Long id, Long assigneeId) {
         requireOperatorOrAdmin();
         User actor = currentUser();
@@ -256,7 +256,6 @@ public class TaskService {
                 .map(this::toCommentDto)
                 .toList();
     }
-
     @Transactional
     public TicketCommentDto addComment(Long id, CreateTicketCommentRequest request) {
         TaskEntity ticket = getEntity(id);
@@ -275,7 +274,9 @@ public class TaskService {
         comment.setCreatedBy(actor.getUsername());
         comment.setUpdatedBy(actor.getUsername());
         TicketComment saved = commentRepository.save(comment);
-        writeAudit(ticket, "COMMENT_ADD", (internal ? "Внутренний" : "Публичный") + " комментарий добавлен", null, request.commentText(), actor);
+        writeAudit(ticket, "COMMENT_ADD", (internal ? "Внутренний" : "Публичный") + " комментарий добавлен",
+                null, request.commentText(), actor);
+        //уведомление пользователя
         if (!internal) notifyParticipants(ticket, "Новый комментарий", "В обращении #" + ticket.getId() + " добавлен комментарий");
         return toCommentDto(saved);
     }
@@ -401,6 +402,7 @@ public class TaskService {
         return requested;
     }
 
+    //история изменения статуса
     private void writeStatusHistory(TaskEntity ticket, Status from, Status to, String reason, User actor) {
         TicketStatusHistory history = new TicketStatusHistory();
         history.setTicket(ticket);

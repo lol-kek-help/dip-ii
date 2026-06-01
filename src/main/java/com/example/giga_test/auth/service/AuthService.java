@@ -39,7 +39,7 @@ public class AuthService {
     }
 
     @Transactional
-    public AuthTokenResponse login(AuthRequest request) {
+    public AuthTokenResponse login (AuthRequest request) {
         var user = userRepository.findByUsername(request.username()).orElseThrow(() ->
                 new EntityNotFoundException("Пользователь не найден"));
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {

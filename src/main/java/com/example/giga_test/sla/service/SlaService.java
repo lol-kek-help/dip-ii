@@ -53,30 +53,31 @@ public class SlaService {
     }
 
     @Transactional
+    //расчёт sla при смене статуса
     public void onStatusChange(TaskEntity ticket, Status newStatus) {
         SlaRecord record = ensureForTicket(ticket);
         LocalDateTime now = LocalDateTime.now();
-
-        if (record.getFirstResponseAt() == null && (newStatus == Status.ASSIGNED || newStatus == Status.IN_PROGRESS || newStatus == Status.PENDING_USER || newStatus == Status.RESOLVED || newStatus == Status.CLOSED)) {
+        //расчёт первого отклика
+        if (record.getFirstResponseAt() == null && (newStatus == Status.ASSIGNED || newStatus == Status.IN_PROGRESS ||
+                newStatus == Status.PENDING_USER || newStatus == Status.RESOLVED || newStatus == Status.CLOSED)) {
             record.setFirstResponseAt(now);
             if (ticket.getCreatedAt() != null) {
                 record.setFrtMinutes(Duration.between(ticket.getCreatedAt(), now).toMinutes());
             }
         }
-
+        //расчёт времени решения
         if (record.getResolvedAt() == null && (newStatus == Status.RESOLVED || newStatus == Status.CLOSED)) {
             record.setResolvedAt(now);
             if (ticket.getCreatedAt() != null) {
                 record.setMttrMinutes(Duration.between(ticket.getCreatedAt(), now).toMinutes());
             }
         }
-
+        //расчёт нарушения
         if (record.getPolicy() != null) {
             boolean frtViolation = record.getFrtMinutes() != null && record.getFrtMinutes() > record.getPolicy().getFirstResponseMinutes();
             boolean mttrViolation = record.getMttrMinutes() != null && record.getMttrMinutes() > record.getPolicy().getResolutionMinutes();
             record.setViolated(frtViolation || mttrViolation);
         }
-
         record.setUpdatedAt(now);
         slaRecordRepository.save(record);
     }

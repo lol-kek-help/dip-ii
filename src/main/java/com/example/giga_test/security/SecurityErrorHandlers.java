@@ -15,21 +15,23 @@ import java.time.Instant;
 import java.util.Map;
 
 @Component
+//до попадания запроса в контроллер
 public class SecurityErrorHandlers implements AuthenticationEntryPoint, AccessDeniedHandler {
     private final ObjectMapper objectMapper;
-
     public SecurityErrorHandlers(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
     }
-
     @Override
-    public void commence(HttpServletRequest request, HttpServletResponse response, org.springframework.security.core.AuthenticationException authException) throws IOException {
+    //ошибка 401
+    public void commence(HttpServletRequest request, HttpServletResponse response,
+                         org.springframework.security.core.AuthenticationException authException) throws IOException {
         String msg = (String) request.getAttribute("auth_error");
         if (msg == null || msg.isBlank()) msg = "Authentication is required";
         write(response, HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", msg, request.getRequestURI());
     }
 
     @Override
+    //ошибка 403
     public void handle(HttpServletRequest request, HttpServletResponse response, AccessDeniedException accessDeniedException) throws IOException {
         write(response, HttpStatus.FORBIDDEN, "FORBIDDEN", "Insufficient permissions", request.getRequestURI());
     }
