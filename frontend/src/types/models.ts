@@ -14,13 +14,13 @@ export interface TopViolatedTicket { ticketId: number; title: string; priority?:
 export interface ExpiringTicket { ticketId: number; title: string; priority?: string; category?: string; deadline: string; assignedTo?: string; }
 export interface SlaReport { total: number; violated: number; violationRate: number; avgFrtMinutes: number; avgMttrMinutes: number; medianFrtMinutes: number; medianMttrMinutes: number; p90FrtMinutes: number; p95FrtMinutes: number; p90MttrMinutes: number; p95MttrMinutes: number; misclassificationRate: number; returnedRate: number; slaViolationClosedRate: number; fcrRate: number; byCategory: SlaGroupMetric[]; byPriority: SlaGroupMetric[]; byOperator: SlaGroupMetric[]; daily: SlaDailyMetric[]; topViolatedTickets: TopViolatedTicket[]; expiringTickets: ExpiringTicket[]; }
 
-export interface Explainability { mode: string; sources: string[]; llmStatus: string; rawModelOutput?: string | null; }
+export interface Explainability { mode: string; sources: string[]; llmStatus: string; rawModelOutput?: string | null; fallbackReason?: string | null; }
 export interface ClassifyResponse { category: Category; priority: Priority; rationale: string; explainability?: Explainability; }
 export interface SimilarItem { ticketId: number; title: string; score: number; }
 export interface ResolvedCase { ticketId: number; title: string; fitPercent: number; resolutionComment?: string; }
 export interface SimilarResponse { tickets: SimilarItem[]; resolvedCases: ResolvedCase[]; articles: string[]; explainability?: Explainability; }
 export interface RecommendResponse { recommendation: string; steps: string[]; explainability?: Explainability; }
-export interface SavedAiRecommendation extends RecommendResponse { id: number; ticketId: number; mode?: string; sources?: string[]; llmStatus?: string; rawModelOutput?: string | null; accepted?: boolean; usefulnessScore?: number; feedbackComment?: string; createdAt: string; evaluatedAt?: string; createdBy?: User; evaluatedBy?: User; }
+export interface SavedAiRecommendation extends RecommendResponse { id: number; ticketId: number; mode?: string; sources?: string[]; llmStatus?: string; rawModelOutput?: string | null; fallbackReason?: string | null; accepted?: boolean; usefulnessScore?: number; feedbackComment?: string; createdAt: string; evaluatedAt?: string; createdBy?: User; evaluatedBy?: User; }
 export interface AiQualityReport { totalRecommendations: number; evaluatedRecommendations: number; acceptedRecommendations: number; acceptanceRate: number; averageUsefulnessScore: number; classificationChanges: number; classificationChangeRate: number; }
 
 export interface TicketComment { id: number; ticketId: number; author: User; commentText: string; internalComment: boolean; createdAt: string; updatedAt?: string; }

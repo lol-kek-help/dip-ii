@@ -1,5 +1,5 @@
-import { BellOutlined, DashboardOutlined, FileTextOutlined, LogoutOutlined, PlusCircleOutlined } from '@ant-design/icons';
-import { Badge, Button, Drawer, Layout, List, Menu, Space, Typography } from 'antd';
+import { BellOutlined, DashboardOutlined, FileTextOutlined, LogoutOutlined, PlusCircleOutlined, UserOutlined } from '@ant-design/icons';
+import { Badge, Button, Drawer, Layout, List, Menu, Space, Tag, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
@@ -10,10 +10,12 @@ import { Notification } from '../types/models';
 const { Header, Sider, Content } = Layout;
 export function AppLayout() {
   const location = useLocation(); const navigate = useNavigate();
-  const { role, refreshToken, clear } = useAuthStore();
+  const { role, refreshToken, clear, username } = useAuthStore();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const canOperate = role === 'OPERATOR' || role === 'ADMIN';
+  const roleLabel = role === 'ADMIN' ? 'Администратор' : role === 'OPERATOR' ? 'Оператор' : 'Пользователь';
+  const roleColor = role === 'ADMIN' ? 'red' : role === 'OPERATOR' ? 'blue' : 'green';
   const items = [
     { key: '/', icon: <DashboardOutlined />, label: <Link to='/'>Дашборд</Link> },
     { key: '/tickets', icon: <FileTextOutlined />, label: <Link to='/tickets'>Обращения</Link> },
@@ -29,6 +31,11 @@ export function AppLayout() {
   const logout = async () => { try { if (refreshToken) await authApi.logout(refreshToken); } finally { clear(); navigate('/login'); } };
 
   return <Layout style={{ minHeight: '100vh' }}><Sider theme='light'><Typography.Title level={4} style={{ padding: 16, margin: 0 }}>Техподдержка</Typography.Title><Menu selectedKeys={[location.pathname]} items={items} /></Sider><Layout><Header style={{ background: '#fff', display: 'flex', justifyContent: 'end' }}><Space>
+    <Space style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: '4px 10px' }}>
+      <UserOutlined />
+      <Typography.Text strong>{username ?? '—'}</Typography.Text>
+      <Tag color={roleColor}>{roleLabel}</Tag>
+    </Space>
     <Badge count={unread}><Button icon={<BellOutlined />} onClick={() => { setDrawerOpen(true); loadNotifications(); }}>Уведомления</Button></Badge>
     <a onClick={logout}><LogoutOutlined /> Выход</a>
   </Space></Header><Content className='page'><Outlet /></Content>

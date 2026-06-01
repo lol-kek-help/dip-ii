@@ -14,6 +14,7 @@ public record SavedAiRecommendationDto(
         List<String> sources,
         String llmStatus,
         String rawModelOutput,
+        String fallbackReason,
         Boolean accepted,
         Integer usefulnessScore,
         String feedbackComment,

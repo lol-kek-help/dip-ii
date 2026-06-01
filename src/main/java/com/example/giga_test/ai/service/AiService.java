@@ -50,7 +50,8 @@ public class AiService {
         String rationale = useLlm ? llm.rationale() : "Fallback rule-based classification due to unavailable/invalid LLM response.";
 
         return new ClassifyResponse(category, priority, rationale,
-                new Explainability(useLlm ? "LLM_JSON" : "FALLBACK_RULES", List.of("ticket_text"), llm.status(), llm.raw()));
+                new Explainability(useLlm ? "LLM_JSON" : "FALLBACK_RULES", List.of("ticket_text"), llm.status(), llm.raw(),
+                        useLlm ? null : fallbackReason(llm.status())));
     }
 
     public SimilarResponse similar(String text) {
@@ -108,7 +109,7 @@ public class AiService {
         }
 
         return new SimilarResponse(taskItems, resolvedCases, articles,
-                new Explainability("RAG_RETRIEVAL", List.of("resolved_tickets", "knowledge_base", "vector_records"), "N/A", null));
+                new Explainability("RAG_RETRIEVAL", List.of("resolved_tickets", "knowledge_base", "vector_records"), "N/A", null, null));
     }
 
     private List<SimilarItem> hybridTicketSearch(String query) {
@@ -229,9 +230,40 @@ public class AiService {
         var sim = similar(text);
         String ragPrompt = buildRagPrompt(text, sim);
         String recommendation = llmJsonGateway.recommend(ragPrompt);
+        String degradedReason = degradedRecommendationReason(recommendation);
         return new RecommendResponse(recommendation,
                 List.of("Проверить похожие кейсы: "+sim.resolvedCases().size(), "Определить маршрутизацию на 2-ю линию", "Подтвердить SLA и эскалацию"),
-                new Explainability("RAG_PLUS_LLM", List.of("resolved_tickets", "knowledge_base", "vector_records"), "OK_OR_DEGRADED", recommendation));
+                new Explainability(degradedReason == null ? "RAG_PLUS_LLM" : "RAG_PLUS_FALLBACK",
+                        List.of("resolved_tickets", "knowledge_base", "vector_records"),
+                        degradedReason == null ? "OK" : "DEGRADED", recommendation, degradedReason));
+    }
+
+    private String fallbackReason(String status) {
+        return switch (status == null ? "" : status) {
+            case "RATE_LIMIT" -> "Сработал fallback: внешний LLM-сервис вернул ограничение частоты запросов или исчерпание квоты.";
+            case "NETWORK_UNAVAILABLE" -> "Сработал fallback: внешний LLM-сервис недоступен из-за сетевой ошибки или ошибки DNS.";
+            case "MISCONFIGURED" -> "Сработал fallback: не настроен ключ доступа к внешнему LLM-сервису.";
+            case "LLM_UNAVAILABLE" -> "Сработал fallback: внешний LLM-сервис временно недоступен.";
+            case "INVALID_JSON_CONTRACT" -> "Сработал fallback: ответ LLM не соответствует ожидаемому JSON-контракту.";
+            default -> "Сработал fallback: LLM-ответ не может быть использован для автоматической обработки.";
+        };
+    }
+
+    private String degradedRecommendationReason(String recommendation) {
+        String normalized = recommendation == null ? "" : recommendation.toLowerCase(Locale.ROOT);
+        if (normalized.contains("429") || normalized.contains("квота") || normalized.contains("too many")) {
+            return fallbackReason("RATE_LIMIT");
+        }
+        if (normalized.contains("сети") || normalized.contains("dns") || normalized.contains("network")) {
+            return fallbackReason("NETWORK_UNAVAILABLE");
+        }
+        if (normalized.contains("misconfigured") || normalized.contains("auth key")) {
+            return fallbackReason("MISCONFIGURED");
+        }
+        if (normalized.contains("temporary unavailable") || normalized.contains("manual triage") || normalized.contains("недоступ")) {
+            return fallbackReason("LLM_UNAVAILABLE");
+        }
+        return null;
     }
 
 

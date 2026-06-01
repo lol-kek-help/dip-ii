@@ -12,10 +12,11 @@ function prettyAiText(raw?: string) {
   return raw.replace(/\r/g, '').replace(/---/g, '\n').replace(/#{3,4}\s*/g, '\n').replace(/\*\*(.*?)\*\*/g, '$1').replace(/^\s*[-*]\s+/gm, '• ').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function ExplainabilityBlock({ explainability }: { explainability?: { mode?: string; sources?: string[]; llmStatus?: string; rawModelOutput?: string | null } }) {
+function ExplainabilityBlock({ explainability }: { explainability?: { mode?: string; sources?: string[]; llmStatus?: string; rawModelOutput?: string | null; fallbackReason?: string | null } }) {
   if (!explainability) return null;
   return <Alert style={{ marginTop: 8 }} type='info' showIcon message={`Режим: ${explainability.mode ?? '—'}, LLM: ${explainability.llmStatus ?? '—'}`} description={<>
     <div>Источники: {(explainability.sources ?? []).join(', ') || '—'}</div>
+    {explainability.fallbackReason && <Alert style={{ marginTop: 8, marginBottom: 8 }} type='warning' showIcon message={explainability.fallbackReason} />}
     {explainability.rawModelOutput && <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }} ellipsis={{ rows: 4, expandable: true }}>Raw: {explainability.rawModelOutput}</Typography.Paragraph>}
   </>} />;
 }
@@ -169,7 +170,7 @@ export function TicketDetailsPage() {
             <List dataSource={savedRecommendations} locale={{ emptyText: 'Нет сохранённых рекомендаций' }} renderItem={(item) => <List.Item>
               <Space direction='vertical' style={{ width: '100%' }}>
                 <Typography.Paragraph ellipsis={{ rows: 4, expandable: true }}>{prettyAiText(item.recommendation)}</Typography.Paragraph>
-                <ExplainabilityBlock explainability={{ mode: item.mode, sources: item.sources, llmStatus: item.llmStatus, rawModelOutput: item.rawModelOutput }} />
+                <ExplainabilityBlock explainability={{ mode: item.mode, sources: item.sources, llmStatus: item.llmStatus, rawModelOutput: item.rawModelOutput, fallbackReason: item.fallbackReason }} />
                 <Form form={feedbackForm} layout='inline' onFinish={async (values) => {
                   const updated = await ticketApi.evaluateAiRecommendation(ticketId, item.id, { accepted: Boolean(values.accepted), usefulnessScore: values.usefulnessScore, feedbackComment: values.feedbackComment });
                   setSavedRecommendations(savedRecommendations.map((r) => r.id === item.id ? updated : r));
