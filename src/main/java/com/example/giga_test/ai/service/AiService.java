@@ -61,16 +61,18 @@ public class AiService {
 
         String category = classify(text).category();
         Set<String> queryHints = extractHintTokens(text, category);
-        var resolvedCases = embeddingService.topK("TASK", text, 20).stream()
+        var taskVectors = embeddingService.topK("TASK", text, searchProperties.getVectorLimit()).stream()
+                .filter(scored -> scored.score() >= searchProperties.getMinRelevanceScore())
+                .toList();
+        var resolvedCases = taskVectors.stream()
                 .map(scored -> mapResolvedCase(scored.record().getSourceId(), scored.score(), text, resolvedTasks))
                 .filter(Objects::nonNull)
                 .filter(rc -> containsHintToken(queryHints, rc.title() + " " + rc.resolutionComment()))
-                .filter(rc -> rc.fitPercent() >= searchProperties.getMinRelevanceScore() * 100.0)
                 .sorted(Comparator.comparingDouble(ResolvedCaseItem::fitPercent).reversed())
                 .limit(searchProperties.getRagLimit())
                 .toList();
         if (resolvedCases.isEmpty()) {
-            resolvedCases = embeddingService.topK("TASK", text, 20).stream()
+            resolvedCases = taskVectors.stream()
                     .map(scored -> mapResolvedCase(scored.record().getSourceId(), scored.score(), text, resolvedTasks))
                     .filter(Objects::nonNull)
                     .sorted(Comparator.comparingDouble(ResolvedCaseItem::fitPercent).reversed())
@@ -80,28 +82,18 @@ public class AiService {
 
         var kbArticles = articleRepository.findAll();
         var articleById = kbArticles.stream().collect(Collectors.toMap(a -> a.getId(), a -> a));
-        var articles = embeddingService.topK("KB", text, 20).stream()
-                .map(scored -> {
-                    var article = articleById.get(scored.record().getSourceId());
-                    if (article == null) return null;
-                    if (!containsHintToken(queryHints, article.getTitle() + " " + article.getContent())) return null;
-                    double boosted = hybridScore(scored.score(), score(text, article.getTitle() + " " + article.getContent()), text, article.getTitle() + " " + article.getContent());
-                    if (boosted < searchProperties.getMinRelevanceScore()) return null;
-                    return article.getTitle() + " (релевантность: " + roundToTwoDecimals(boosted * 100.0) + "%)";
-                })
+        var articleVectors = embeddingService.topK("KB", text, searchProperties.getVectorLimit()).stream()
+                .filter(scored -> scored.score() >= searchProperties.getMinRelevanceScore())
+                .toList();
+        var articles = articleVectors.stream()
+                .map(scored -> mapArticleHit(scored.score(), text, queryHints, articleById.get(scored.record().getSourceId()), true))
                 .filter(Objects::nonNull)
                 .distinct()
                 .limit(searchProperties.getRagLimit())
                 .toList();
         if (articles.isEmpty()) {
-            articles = embeddingService.topK("KB", text, 20).stream()
-                    .map(scored -> {
-                        var article = articleById.get(scored.record().getSourceId());
-                        if (article == null) return null;
-                        double boosted = hybridScore(scored.score(), score(text, article.getTitle() + " " + article.getContent()), text, article.getTitle() + " " + article.getContent());
-                        if (boosted < searchProperties.getMinRelevanceScore()) return null;
-                        return article.getTitle() + " (релевантность: " + roundToTwoDecimals(boosted * 100.0) + "%)";
-                    })
+            articles = articleVectors.stream()
+                    .map(scored -> mapArticleHit(scored.score(), text, queryHints, articleById.get(scored.record().getSourceId()), false))
                     .filter(Objects::nonNull)
                     .distinct()
                     .limit(searchProperties.getRagLimit())
@@ -132,6 +124,7 @@ public class AiService {
         );
 
         var vector = embeddingService.topK("TASK", query, searchProperties.getVectorLimit()).stream()
+                .filter(v -> v.score() >= searchProperties.getMinRelevanceScore())
                 .map(v -> new SimilarItem(v.record().getSourceId(), "", Math.max(0.0, v.score())))
                 .toList();
 
@@ -139,14 +132,14 @@ public class AiService {
         var tokenMatches = findByHintTokens(retrievalHints);
 
         Map<Long, Double> merged = new HashMap<>();
-        for (int i = 0; i < fts.size(); i++) {
-            merged.merge(fts.get(i).ticketId(), 1.0 / (60 + i + 1), Double::sum);
+        for (SimilarItem item : vector) {
+            merged.merge(item.ticketId(), item.score() * searchProperties.getVectorWeight(), Double::sum);
         }
-        for (int i = 0; i < vector.size(); i++) {
-            merged.merge(vector.get(i).ticketId(), 1.0 / (60 + i + 1), Double::sum);
+        for (SimilarItem item : fts) {
+            merged.merge(item.ticketId(), Math.min(1.0, item.score()) * searchProperties.getLexicalWeight(), Double::sum);
         }
-        for (int i = 0; i < tokenMatches.size(); i++) {
-            merged.merge(tokenMatches.get(i).ticketId(), 2.0 / (40 + i + 1), Double::sum);
+        for (SimilarItem item : tokenMatches) {
+            merged.merge(item.ticketId(), searchProperties.getTokenBoostStep(), Double::sum);
         }
 
         Map<Long, TaskEntity> taskMap = taskRepository.findAllById(merged.keySet()).stream()
@@ -159,10 +152,9 @@ public class AiService {
                     TaskEntity t = taskMap.get(e.getKey());
                     if (t == null) return null;
                     String text = t.getTitle() + " " + (t.getDescription() == null ? "" : t.getDescription());
-                    double boosted = e.getValue() + keywordBoost(query, text);
-                    if (queryHints.contains("vpn") && !containsHintToken(queryHints, text)) {
-                        boosted *= 0.2;
-                    }
+                    double lexical = score(query, text);
+                    double boosted = e.getValue() + lexical * searchProperties.getLexicalWeight() + keywordBoost(query, text);
+                    if (boosted < searchProperties.getMinRelevanceScore()) return null;
                     return new SimilarItem(t.getId(), t.getTitle(), boosted);
                 })
                 .filter(Objects::nonNull)
@@ -182,7 +174,12 @@ public class AiService {
             return pre.stream().limit(searchProperties.getFinalLimit()).toList();
         }
         return pre.stream()
-                .map(i -> new SimilarItem(i.ticketId(), i.title(), reranked.getOrDefault(i.ticketId(), 0.0)))
+                .map(i -> {
+                    double llmScore = Math.max(0.0, reranked.getOrDefault(i.ticketId(), 0.0));
+                    double combined = llmScore == 0.0 ? i.score() : (0.7 * llmScore) + (0.3 * i.score());
+                    return new SimilarItem(i.ticketId(), i.title(), combined);
+                })
+                .filter(i -> i.score() >= searchProperties.getMinRelevanceScore())
                 .sorted(Comparator.comparingDouble(SimilarItem::score).reversed())
                 .limit(searchProperties.getFinalLimit())
                 .toList();
@@ -224,6 +221,15 @@ public class AiService {
             if (c.contains(h)) return true;
         }
         return false;
+    }
+
+    private String mapArticleHit(double vectorScore, String queryText, Set<String> queryHints, com.example.giga_test.ai.entity.KnowledgeBaseArticle article, boolean requireHints) {
+        if (article == null) return null;
+        String articleText = article.getTitle() + " " + article.getContent();
+        if (requireHints && !containsHintToken(queryHints, articleText)) return null;
+        double boosted = hybridScore(vectorScore, score(queryText, articleText), queryText, articleText);
+        if (boosted < searchProperties.getMinRelevanceScore()) return null;
+        return article.getTitle() + " (релевантность: " + roundToTwoDecimals(boosted * 100.0) + "%)";
     }
 
     public RecommendResponse recommend(String text) {

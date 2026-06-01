@@ -25,6 +25,12 @@ public class VectorRecord {
     @Column(name = "text_content", nullable = false, length = 8000)
     private String textContent;
 
-    @Column(name = "embedding", nullable = false, length = 8000)
+    @Column(name = "embedding", nullable = false, columnDefinition = "TEXT")
     private String embedding;
+
+    @Column(name = "embedding_provider", nullable = false, length = 100)
+    private String embeddingProvider;
+
+    @Column(name = "embedding_dimension")
+    private Integer embeddingDimension;
 }

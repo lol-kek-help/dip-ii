@@ -4,6 +4,7 @@ import com.example.giga_test.ai.entity.VectorRecord;
 import com.example.giga_test.ai.repository.VectorRecordRepository;
 import com.example.giga_test.integration.LlmClient;
 import com.example.giga_test.task.entity.TaskEntity;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -13,7 +14,9 @@ import java.util.stream.Collectors;
 @Service
 public class EmbeddingService {
 
-    private static final int DIM = 128;
+    private static final int DIM = 1024;
+    private static final String LOCAL_HASH_PROVIDER = "LOCAL_HASH";
+
     private final VectorRecordRepository vectorRecordRepository;
     private final LlmClient llmClient;
     private final JdbcTemplate jdbcTemplate;
@@ -40,52 +43,63 @@ public class EmbeddingService {
     }
 
     public List<ScoredVectorRecord> topK(String sourceType, String query, int k) {
-        double[] queryVec = embed(query);
-        String vecLiteral = toVectorLiteral(queryVec);
-        List<ScoredVectorRecord> fromPgVector = jdbcTemplate.query(
-                """
-                SELECT id, source_type, source_id, text_content, embedding,
-                       1 - (embedding_vector <=> CAST(? AS vector)) AS score
-                FROM vector_records
-                WHERE source_type = ? AND embedding_vector IS NOT NULL
-                ORDER BY embedding_vector <=> CAST(? AS vector)
-                LIMIT ?
-                """,
-                (rs, rowNum) -> mapRecord(rs, rs.getDouble("score")),
-                vecLiteral, sourceType, vecLiteral, k
-        );
-        if (!fromPgVector.isEmpty()) {
-            return fromPgVector;
+        EmbeddingPayload queryEmbedding = embedPayload(query);
+        String vecLiteral = toVectorLiteral(queryEmbedding.vector());
+        try {
+            List<ScoredVectorRecord> fromPgVector = jdbcTemplate.query(
+                    """
+                    SELECT id, source_type, source_id, text_content, embedding, embedding_provider, embedding_dimension,
+                           1 - (embedding_vector <=> CAST(? AS vector)) AS score
+                    FROM vector_records
+                    WHERE source_type = ?
+                      AND embedding_provider = ?
+                      AND embedding_vector IS NOT NULL
+                    ORDER BY embedding_vector <=> CAST(? AS vector)
+                    LIMIT ?
+                    """,
+                    (rs, rowNum) -> mapRecord(rs, rs.getDouble("score")),
+                    vecLiteral, sourceType, queryEmbedding.provider(), vecLiteral, k
+            );
+            if (!fromPgVector.isEmpty()) {
+                return fromPgVector;
+            }
+        } catch (DataAccessException ignored) {
+            // Fallback to the serialized embedding column when pgvector is unavailable or not initialized yet.
         }
 
-        return vectorRecordRepository.findAllBySourceType(sourceType).stream()
-                .map(v -> new ScoredVectorRecord(v, cosine(queryVec, parse(v.getEmbedding()))))
+        return vectorRecordRepository.findAllBySourceTypeAndEmbeddingProvider(sourceType, queryEmbedding.provider()).stream()
+                .map(v -> new ScoredVectorRecord(v, cosine(queryEmbedding.vector(), parse(v.getEmbedding()))))
                 .sorted(Comparator.comparingDouble(ScoredVectorRecord::score).reversed())
                 .limit(k)
                 .toList();
     }
 
     private void upsert(String sourceType, Long sourceId, String text) {
-        double[] embeddingArray = embed(text);
-        String serialized = serialize(embeddingArray);
-        String vecLiteral = toVectorLiteral(embeddingArray);
+        EmbeddingPayload embedding = embedPayload(text);
+        String serialized = serialize(embedding.vector());
+        String vecLiteral = toVectorLiteral(embedding.vector());
 
         jdbcTemplate.update(
                 """
-                INSERT INTO vector_records(source_type, source_id, text_content, embedding, embedding_vector)
-                VALUES (?, ?, ?, ?, CAST(? AS vector))
+                INSERT INTO vector_records(source_type, source_id, text_content, embedding, embedding_vector, embedding_provider, embedding_dimension)
+                VALUES (?, ?, ?, ?, CAST(? AS vector), ?, ?)
                 ON CONFLICT (source_type, source_id)
                 DO UPDATE SET text_content = EXCLUDED.text_content,
                               embedding = EXCLUDED.embedding,
-                              embedding_vector = EXCLUDED.embedding_vector
+                              embedding_vector = EXCLUDED.embedding_vector,
+                              embedding_provider = EXCLUDED.embedding_provider,
+                              embedding_dimension = EXCLUDED.embedding_dimension
                 """,
-                sourceType, sourceId, text, serialized, vecLiteral
+                sourceType, sourceId, text, serialized, vecLiteral, embedding.provider(), embedding.vector().length
         );
     }
 
     private boolean isEmbeddingUpToDate(String sourceType, Long sourceId, String textContent) {
+        String expectedProvider = expectedEmbeddingProvider();
         return vectorRecordRepository.findBySourceTypeAndSourceId(sourceType, sourceId)
-                .map(existing -> Objects.equals(existing.getTextContent(), textContent))
+                .map(existing -> Objects.equals(existing.getTextContent(), textContent)
+                        && Objects.equals(existing.getEmbeddingProvider(), expectedProvider)
+                        && Objects.equals(existing.getEmbeddingDimension(), DIM))
                 .orElse(false);
     }
 
@@ -96,28 +110,47 @@ public class EmbeddingService {
                 .sourceId(rs.getLong("source_id"))
                 .textContent(rs.getString("text_content"))
                 .embedding(rs.getString("embedding"))
+                .embeddingProvider(rs.getString("embedding_provider"))
+                .embeddingDimension(rs.getInt("embedding_dimension"))
                 .build();
         return new ScoredVectorRecord(record, score);
     }
 
     public double[] embed(String text) {
+        return embedPayload(text).vector();
+    }
+
+    private EmbeddingPayload embedPayload(String text) {
         double[] real = llmClient.embed(text);
         if (real != null && real.length > 0) {
-            return fitDimAndNormalize(real, DIM);
+            return new EmbeddingPayload(fitDimAndNormalize(real, DIM), expectedEmbeddingProvider());
         }
-        return localHashEmbedding(text);
+        return new EmbeddingPayload(localHashEmbedding(text), LOCAL_HASH_PROVIDER);
+    }
+
+    private String expectedEmbeddingProvider() {
+        String provider = llmClient.embeddingProviderKey();
+        return provider == null || provider.isBlank() ? LOCAL_HASH_PROVIDER : provider;
     }
 
     private double[] localHashEmbedding(String text) {
         double[] vec = new double[DIM];
-        String[] tokens = text.toLowerCase(Locale.ROOT).split("\\s+");
+        String normalized = text == null ? "" : text.toLowerCase(Locale.ROOT).replace('ё', 'е');
+        String[] tokens = normalized.split("[^\\p{IsAlphabetic}\\p{IsDigit}]+");
         for (String token : tokens) {
             if (token.isBlank()) continue;
-            int idx = Math.abs(token.hashCode()) % DIM;
-            vec[idx] += 1.0;
+            addFeature(vec, token, 1.0);
+            for (int i = 0; i + 3 <= token.length(); i++) {
+                addFeature(vec, token.substring(i, i + 3), 0.25);
+            }
         }
         normalize(vec);
         return vec;
+    }
+
+    private void addFeature(double[] vec, String token, double weight) {
+        int idx = Math.floorMod(token.hashCode(), vec.length);
+        vec[idx] += weight;
     }
 
     private double[] fitDimAndNormalize(double[] input, int dim) {
@@ -159,5 +192,6 @@ public class EmbeddingService {
         return v;
     }
 
+    private record EmbeddingPayload(double[] vector, String provider) {}
     public record ScoredVectorRecord(VectorRecord record, double score) {}
 }
