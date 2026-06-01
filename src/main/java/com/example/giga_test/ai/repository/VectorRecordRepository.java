@@ -8,5 +8,6 @@ import java.util.Optional;
 
 public interface VectorRecordRepository extends JpaRepository<VectorRecord, Long> {
     List<VectorRecord> findAllBySourceType(String sourceType);
+    List<VectorRecord> findAllBySourceTypeAndEmbeddingProvider(String sourceType, String embeddingProvider);
     Optional<VectorRecord> findBySourceTypeAndSourceId(String sourceType, Long sourceId);
 }
