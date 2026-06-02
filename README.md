@@ -1,5 +1,15 @@
 # Система поддержки пользователей (backend + frontend)
 
+## CI/CD
+
+В проект добавлен GitHub Actions workflow `.github/workflows/ci-cd.yml`. Для учебного проекта он запускается только вручную через `Actions` → `CI/CD` → `Run workflow`, чтобы конвейер не стартовал автоматически на каждый `push`, `pull request` или тег.
+
+1. `Backend tests` поднимает PostgreSQL с pgvector и выполняет `mvn -B test`.
+2. `Frontend checks` устанавливает зависимости через `npm ci` и выполняет `npm run build`.
+3. `Delivery artifacts` запускается только после успешного предварительного тестирования, собирает backend JAR и frontend `dist`, затем загружает их как артефакты workflow.
+
+Чтобы сделать скриншот успешного выполнения: откройте вкладку `Actions` в GitHub, выберите workflow `CI/CD`, нажмите на последний успешный запуск с зелёной галочкой и сделайте скриншот страницы, где видны все три успешные jobs (`Backend tests`, `Frontend checks`, `Delivery artifacts`).
+
 ## Генерация JWT_SECRET
 ```bash
 [Convert]::ToBase64String((1..64 | ForEach-Object {Get-Random -Maximum 256}))
