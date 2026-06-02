@@ -98,6 +98,9 @@ public class LlmJsonGateway {
         if (normalized.contains("429") || normalized.contains("квота") || normalized.contains("too many")) {
             return "RATE_LIMIT";
         }
+        if (normalized.contains("402") || normalized.contains("payment required") || normalized.contains("billing") || normalized.contains("оплат")) {
+            return "PAYMENT_REQUIRED";
+        }
         if (normalized.contains("сети") || normalized.contains("dns") || normalized.contains("network")) {
             return "NETWORK_UNAVAILABLE";
         }

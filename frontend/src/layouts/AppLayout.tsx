@@ -31,19 +31,29 @@ export function AppLayout() {
   const unread = notifications.filter((n) => !n.read).length;
   const logout = async () => { try { if (refreshToken) await authApi.logout(refreshToken); } finally { clear(); navigate('/login'); } };
 
-  return <Layout style={{ minHeight: '100vh' }}><Sider theme='light'><Typography.Title level={4} style={{ padding: 16, margin: 0 }}>Техподдержка</Typography.Title><Menu selectedKeys={[location.pathname]} items={items} /></Sider><Layout><Header style={{ background: '#fff', display: 'flex', justifyContent: 'end' }}><Space>
-    <Space style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: '4px 10px' }}>
-      <UserOutlined />
-      <Typography.Text strong>{username ?? '—'}</Typography.Text>
-      <Tag color={roleColor}>{roleLabel}</Tag>
-    </Space>
-    <Badge count={unread}><Button icon={<BellOutlined />} onClick={() => { setDrawerOpen(true); loadNotifications(); }}>Уведомления</Button></Badge>
-    <a onClick={logout}><LogoutOutlined /> Выход</a>
-  </Space></Header><Content className='page'><Outlet /></Content>
-    <Drawer title='Уведомления' open={drawerOpen} onClose={() => setDrawerOpen(false)} extra={<Button onClick={async () => { await notificationApi.markAllRead(); await loadNotifications(); }}>Прочитать все</Button>}>
-      <List dataSource={notifications} locale={{ emptyText: 'Уведомлений нет' }} renderItem={(item) => <List.Item actions={!item.read ? [<Button key='read' type='link' onClick={async () => { await notificationApi.markRead(item.id); await loadNotifications(); }}>Прочитано</Button>] : []}>
-        <List.Item.Meta title={<Space>{!item.read && <Badge status='processing' />}{item.subject}</Space>} description={<><div>{item.message}</div><Typography.Text type='secondary'>{item.createdAt}</Typography.Text></>} />
-      </List.Item>} />
-    </Drawer>
-  </Layout></Layout>;
+  return <Layout className='app-shell'>
+    <Sider theme='light' className='app-sider'>
+      <Typography.Title level={4} className='app-logo'>Техподдержка</Typography.Title>
+      <Menu selectedKeys={[location.pathname]} items={items} />
+    </Sider>
+    <Layout>
+      <Header className='app-header'>
+        <Space wrap>
+          <Space className='user-chip'>
+            <UserOutlined />
+            <Typography.Text strong>{username ?? '—'}</Typography.Text>
+            <Tag color={roleColor}>{roleLabel}</Tag>
+          </Space>
+          <Badge count={unread}><Button icon={<BellOutlined />} onClick={() => { setDrawerOpen(true); loadNotifications(); }}>Уведомления</Button></Badge>
+          <a onClick={logout}><LogoutOutlined /> Выход</a>
+        </Space>
+      </Header>
+      <Content className='page'><Outlet /></Content>
+      <Drawer title='Уведомления' open={drawerOpen} onClose={() => setDrawerOpen(false)} extra={<Button onClick={async () => { await notificationApi.markAllRead(); await loadNotifications(); }}>Прочитать все</Button>}>
+        <List dataSource={notifications} locale={{ emptyText: 'Уведомлений нет' }} renderItem={(item) => <List.Item actions={!item.read ? [<Button key='read' type='link' onClick={async () => { await notificationApi.markRead(item.id); await loadNotifications(); }}>Прочитано</Button>] : []}>
+          <List.Item.Meta title={<Space>{!item.read && <Badge status='processing' />}{item.subject}</Space>} description={<><div>{item.message}</div><Typography.Text type='secondary'>{item.createdAt}</Typography.Text></>} />
+        </List.Item>} />
+      </Drawer>
+    </Layout>
+  </Layout>;
 }
