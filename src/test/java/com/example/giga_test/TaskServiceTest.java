@@ -12,6 +12,7 @@ import com.example.giga_test.model.User;
 import com.example.giga_test.notification.service.NotificationService;
 import com.example.giga_test.sla.service.SlaService;
 import com.example.giga_test.task.dto.CreateTaskRequest;
+import com.example.giga_test.task.dto.UpdateTaskRequest;
 import com.example.giga_test.task.entity.TaskEntity;
 import com.example.giga_test.task.repository.TaskRepository;
 import com.example.giga_test.task.service.TaskService;
@@ -22,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 
@@ -116,8 +118,98 @@ class TaskServiceTest {
         )));
     }
 
+    @Test
+    void updateTaskShouldUpdatePriorityAndAuditChange() {
+        TaskRepository taskRepository = mock(TaskRepository.class);
+        UserRepository userRepository = mock(UserRepository.class);
+        AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
+        EmbeddingService embeddingService = mock(EmbeddingService.class);
+        TaskService service = new TaskService(taskRepository, userRepository, auditLogRepository, mock(SlaService.class),
+                mock(AiService.class), embeddingService, mock(TicketCommentRepository.class),
+                mock(TicketStatusHistoryRepository.class), mock(AiRecommendationRepository.class),
+                mock(NotificationService.class), new ObjectMapper());
+        User operator = user(20L, "operator1", RoleName.OPERATOR);
+        User requester = user(10L, "user1", RoleName.USER);
+        TaskEntity existing = task(100L, requester, Status.NEW, Priority.MEDIUM, Category.GENERAL);
+        authenticateAs(operator.getUsername());
+
+        when(userRepository.findByUsername("operator1")).thenReturn(Optional.of(operator));
+        when(taskRepository.findById(100L)).thenReturn(Optional.of(existing));
+        when(taskRepository.save(any(TaskEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        var result = service.updateTask(100L, new UpdateTaskRequest(
+                "Обновленная тема", null, Priority.URGENT, Category.INCIDENT, null,
+                null, null, null, null
+        ));
+
+        assertEquals(Priority.URGENT, result.getPriority());
+        assertEquals(Category.INCIDENT, result.getCategory());
+        assertEquals("Обновленная тема", result.getTitle());
+        verify(embeddingService).upsertTaskEmbedding(existing);
+        verify(auditLogRepository).save(any());
+    }
+
+    @Test
+    void deleteTaskShouldBeAvailableForAdminOnly() {
+        TaskRepository taskRepository = mock(TaskRepository.class);
+        UserRepository userRepository = mock(UserRepository.class);
+        AuditLogRepository auditLogRepository = mock(AuditLogRepository.class);
+        TaskService service = new TaskService(taskRepository, userRepository, auditLogRepository, mock(SlaService.class),
+                mock(AiService.class), mock(EmbeddingService.class), mock(TicketCommentRepository.class),
+                mock(TicketStatusHistoryRepository.class), mock(AiRecommendationRepository.class),
+                mock(NotificationService.class), new ObjectMapper());
+        User admin = user(1L, "admin1", RoleName.ADMIN);
+        User requester = user(10L, "user1", RoleName.USER);
+        TaskEntity existing = task(100L, requester, Status.NEW, Priority.MEDIUM, Category.GENERAL);
+        authenticateAs(admin.getUsername());
+
+        when(userRepository.findByUsername("admin1")).thenReturn(Optional.of(admin));
+        when(taskRepository.findById(100L)).thenReturn(Optional.of(existing));
+
+        service.deleteTask(100L);
+
+        verify(auditLogRepository).save(any());
+        verify(taskRepository).delete(existing);
+    }
+
+    @Test
+    void userShouldReceiveForbiddenForForeignTicket() {
+        TaskRepository taskRepository = mock(TaskRepository.class);
+        UserRepository userRepository = mock(UserRepository.class);
+        TaskService service = new TaskService(taskRepository, userRepository, mock(AuditLogRepository.class),
+                mock(SlaService.class), mock(AiService.class), mock(EmbeddingService.class),
+                mock(TicketCommentRepository.class), mock(TicketStatusHistoryRepository.class),
+                mock(AiRecommendationRepository.class), mock(NotificationService.class), new ObjectMapper());
+        User currentUser = user(10L, "user1", RoleName.USER);
+        User otherUser = user(11L, "user2", RoleName.USER);
+        TaskEntity foreignTask = task(100L, otherUser, Status.NEW, Priority.MEDIUM, Category.GENERAL);
+        foreignTask.setCreatedBy("user2");
+        authenticateAs(currentUser.getUsername());
+
+        when(userRepository.findByUsername("user1")).thenReturn(Optional.of(currentUser));
+        when(taskRepository.findById(100L)).thenReturn(Optional.of(foreignTask));
+
+        assertThrows(AccessDeniedException.class, () -> service.getTaskByID(100L));
+    }
+
     private void authenticateAs(String username) {
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(username, null));
+    }
+
+    private TaskEntity task(Long id, User requester, Status status, Priority priority, Category category) {
+        TaskEntity task = new TaskEntity();
+        task.setId(id);
+        task.setTitle("Тема");
+        task.setDescription("Описание");
+        task.setRequester(requester);
+        task.setStatus(status);
+        task.setPriority(priority);
+        task.setCategory(category);
+        task.setCreatedBy(requester.getUsername());
+        task.setUpdatedBy(requester.getUsername());
+        task.setCreatedAt(LocalDateTime.now());
+        task.setUpdatedAt(LocalDateTime.now());
+        return task;
     }
 
     private User user(Long id, String username, RoleName role) {
