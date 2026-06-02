@@ -80,6 +80,7 @@ public class TaskService {
         this.notificationService = notificationService;
         this.objectMapper = objectMapper;
     }
+    @Transactional(readOnly = true)
     public PageResponse<Task> searchTaskByFilter(TaskSearchFilter filter) {
         int pageSize = normalizePageSize(filter.pageSize());
         int pageNumber = normalizePageNumber(filter.pageNumber());
@@ -116,6 +117,7 @@ public class TaskService {
         return new PageResponse<>(page.stream().map(this::entityToTask).toList(), pageNumber, pageSize, page.getTotalElements(), page.getTotalPages());
     }
 
+    @Transactional(readOnly = true)
     public Task getTaskByID(Long id) {
         return entityToTask(getEntity(id));
     }
@@ -469,12 +471,29 @@ public class TaskService {
         task.setStatus(entity.getStatus());
         task.setPriority(entity.getPriority());
         task.setCategory(entity.getCategory());
-        task.setRequester(entity.getRequester());
-        task.setAssignedTo(entity.getAssignedTo());
+        task.setRequester(toResponseUser(entity.getRequester()));
+        task.setAssignedTo(toResponseUser(entity.getAssignedTo()));
         task.setCreatedAt(entity.getCreatedAt());
         task.setResolutionDeadline(entity.getResolutionDeadline());
         task.setResolutionComment(entity.getResolutionComment());
         return task;
+    }
+
+
+    private User toResponseUser(User user) {
+        if (user == null) {
+            return null;
+        }
+        return User.builder()
+                .id(user.getId())
+                .name(user.getName())
+                .username(user.getUsername())
+                .role(user.getRole())
+                .createdAt(user.getCreatedAt())
+                .updatedAt(user.getUpdatedAt())
+                .createdBy(user.getCreatedBy())
+                .updatedBy(user.getUpdatedBy())
+                .build();
     }
 
     private TicketCommentDto toCommentDto(TicketComment comment) {
