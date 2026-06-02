@@ -3,6 +3,7 @@ package com.example.giga_test.ai.service;
 import com.example.giga_test.ai.dto.AiDtos.*;
 import com.example.giga_test.ai.config.AiSearchProperties;
 import com.example.giga_test.ai.integration.LlmJsonGateway;
+import com.example.giga_test.ai.entity.KnowledgeBaseArticle;
 import com.example.giga_test.audit.repository.AuditLogRepository;
 import com.example.giga_test.ai.repository.KnowledgeBaseArticleRepository;
 import com.example.giga_test.ai.dto.AiQualityReportDto;
@@ -89,17 +90,26 @@ public class AiService {
         var articles = articleVectors.stream()
                 .map(scored -> mapArticleHit(scored.score(), text, queryHints, articleById.get(scored.record().getSourceId()), true))
                 .filter(Objects::nonNull)
-                .distinct()
-                .limit(searchProperties.getRagLimit())
-                .toList();
+                .collect(Collectors.collectingAndThen(
+                        Collectors.toMap(KnowledgeArticleItem::articleId, item -> item, AiService::bestArticleHit, LinkedHashMap::new),
+                        map -> map.values().stream()
+                                .sorted(Comparator.comparingDouble(KnowledgeArticleItem::fitPercent).reversed())
+                                .limit(searchProperties.getRagLimit())
+                                .toList()
+                ));
         if (articles.isEmpty()) {
             articles = articleVectors.stream()
                     .map(scored -> mapArticleHit(scored.score(), text, queryHints, articleById.get(scored.record().getSourceId()), false))
                     .filter(Objects::nonNull)
-                    .distinct()
-                    .limit(searchProperties.getRagLimit())
-                    .toList();
+                    .collect(Collectors.collectingAndThen(
+                            Collectors.toMap(KnowledgeArticleItem::articleId, item -> item, AiService::bestArticleHit, LinkedHashMap::new),
+                            map -> map.values().stream()
+                                    .sorted(Comparator.comparingDouble(KnowledgeArticleItem::fitPercent).reversed())
+                                    .limit(searchProperties.getRagLimit())
+                                    .toList()
+                    ));
         }
+        articles = mergeArticleHits(articles, lexicalArticleSearch(text));
 
         return new SimilarResponse(taskItems, resolvedCases, articles,
                 new Explainability("RAG_RETRIEVAL", List.of("resolved_tickets", "knowledge_base", "vector_records"), "N/A", null, null));
@@ -230,28 +240,156 @@ public class AiService {
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
     //generation-фаза
-    private String mapArticleHit(double vectorScore, String queryText, Set<String> queryHints, com.example.giga_test.ai.entity.KnowledgeBaseArticle article, boolean requireHints) {
+    private KnowledgeArticleItem mapArticleHit(double vectorScore, String queryText, Set<String> queryHints, KnowledgeBaseArticle article, boolean requireHints) {
         if (article == null) return null;
         String articleText = article.getTitle() + " " + article.getContent();
         if (requireHints && !containsHintToken(queryHints, articleText)) return null;
         double boosted = hybridScore(vectorScore, score(queryText, articleText), queryText, articleText);
         if (boosted < searchProperties.getMinRelevanceScore()) return null;
-        return article.getTitle() + " (релевантность: " + roundToTwoDecimals(boosted * 100.0) + "%)";
+        return articleItem(article, boosted);
+    }
+
+    private List<KnowledgeArticleItem> mergeArticleHits(List<KnowledgeArticleItem> primary, List<KnowledgeArticleItem> secondary) {
+        return java.util.stream.Stream.concat(
+                        primary == null ? java.util.stream.Stream.empty() : primary.stream(),
+                        secondary == null ? java.util.stream.Stream.empty() : secondary.stream()
+                )
+                .collect(Collectors.collectingAndThen(
+                        Collectors.toMap(KnowledgeArticleItem::articleId, item -> item, AiService::bestArticleHit, LinkedHashMap::new),
+                        map -> map.values().stream()
+                                .sorted(Comparator.comparingDouble(KnowledgeArticleItem::fitPercent).reversed())
+                                .limit(searchProperties.getRagLimit())
+                                .toList()
+                ));
+    }
+
+    private static KnowledgeArticleItem bestArticleHit(KnowledgeArticleItem left, KnowledgeArticleItem right) {
+        return left.fitPercent() >= right.fitPercent() ? left : right;
+    }
+
+    private List<KnowledgeArticleItem> lexicalArticleSearch(String queryText) {
+        return articleRepository.findAll().stream()
+                .map(article -> {
+                    String articleText = article.getTitle() + " " + article.getContent();
+                    double lexical = score(queryText, articleText);
+                    double titleLexical = score(queryText, article.getTitle());
+                    double relevance = Math.min(1.0, (lexical * 0.65) + (titleLexical * 0.35) + keywordBoost(queryText, articleText));
+                    if (relevance < Math.max(0.08, searchProperties.getMinRelevanceScore() / 2.0)) return null;
+                    return articleItem(article, relevance);
+                })
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparingDouble(KnowledgeArticleItem::fitPercent).reversed())
+                .limit(searchProperties.getRagLimit())
+                .toList();
+    }
+
+    private KnowledgeArticleItem articleItem(KnowledgeBaseArticle article, double relevance) {
+        return new KnowledgeArticleItem(article.getId(), article.getTitle(), roundToTwoDecimals(relevance * 100.0),
+                article.getContent(), article.getCategory());
     }
 
     public RecommendResponse recommend(String text) {
         var sim = similar(text);
         //сборка промпта
         String ragPrompt = buildRagPrompt(text, sim);
-        String recommendation = llmJsonGateway.recommend(ragPrompt);
-        String degradedReason = degradedRecommendationReason(recommendation);
-        return new RecommendResponse(recommendation,
-                List.of("Проверить похожие кейсы: "+sim.resolvedCases().size(), "Определить маршрутизацию на 2-ю линию",
-                        "Подтвердить SLA и эскалацию"),
-                new Explainability(degradedReason == null ? "RAG_PLUS_LLM" : "RAG_PLUS_FALLBACK",
-                        List.of("resolved_tickets", "knowledge_base", "vector_records"),
-                        degradedReason == null ? "OK" : "DEGRADED", recommendation, degradedReason));
+        String llmRecommendation = llmJsonGateway.recommend(ragPrompt);
+        String degradedReason = degradedRecommendationReason(llmRecommendation);
+        GroundedRecommendation grounded = buildGroundedRecommendation(text, sim, llmRecommendation);
+        return new RecommendResponse(grounded.recommendation(), grounded.steps(),
+                new Explainability(grounded.usedRagSources() ? "RAG_GROUNDED" : (degradedReason == null ? "RAG_PLUS_LLM" : "RAG_PLUS_FALLBACK"),
+                        List.of("knowledge_base", "resolved_tickets", "vector_records"),
+                        degradedReason == null ? "OK" : "DEGRADED", llmRecommendation, degradedReason));
     }
+
+    private GroundedRecommendation buildGroundedRecommendation(String text, SimilarResponse sim, String llmRecommendation) {
+        boolean hasArticles = sim.articles() != null && !sim.articles().isEmpty();
+        boolean hasCases = sim.resolvedCases() != null && !sim.resolvedCases().isEmpty();
+        if (!hasArticles && !hasCases) {
+            String fallback = llmRecommendation == null || llmRecommendation.isBlank()
+                    ? "По обращению не найдены релевантные статьи базы знаний и решённые инциденты. Передайте заявку оператору для ручного анализа."
+                    : llmRecommendation;
+            return new GroundedRecommendation(fallback, List.of(
+                    "Проверить обращение вручную",
+                    "Уточнить недостающие данные у автора",
+                    "Назначить ответственную группу по классификации обращения"
+            ), false);
+        }
+
+        List<String> steps = extractGroundedSteps(sim);
+        StringBuilder sb = new StringBuilder();
+        sb.append("Рекомендация по обращению:\n").append(text).append("\n\n");
+        sb.append("Основание: ");
+        if (hasArticles) {
+            sb.append("статьи базы знаний");
+            if (hasCases) sb.append(" и ");
+        }
+        if (hasCases) sb.append("похожие решённые инциденты");
+        sb.append(".\n\n");
+
+        if (hasArticles) {
+            sb.append("Что говорит база знаний:\n");
+            sim.articles().forEach(article -> sb.append("- ").append(article.title()).append(" [")
+                    .append(article.fitPercent()).append("%]: ").append(article.content()).append("\n"));
+            sb.append("\n");
+        }
+        if (hasCases) {
+            sb.append("Что сработало в похожих решённых обращениях:\n");
+            sim.resolvedCases().forEach(c -> sb.append("- #").append(c.ticketId()).append(" ").append(c.title())
+                    .append(" [").append(c.fitPercent()).append("%]: ").append(c.resolutionComment()).append("\n"));
+            sb.append("\n");
+        }
+
+        sb.append("Маршрутизация:\n").append(inferRouting(sim)).append("\n\n");
+        sb.append("Первые действия:\n");
+        for (int i = 0; i < steps.size(); i++) {
+            sb.append(i + 1).append(". ").append(steps.get(i)).append("\n");
+        }
+        return new GroundedRecommendation(sb.toString().trim(), steps, true);
+    }
+
+    private List<String> extractGroundedSteps(SimilarResponse sim) {
+        List<String> steps = new ArrayList<>();
+        if (sim.articles() != null) {
+            sim.articles().forEach(article -> steps.addAll(extractSentences(article.content())));
+        }
+        if (sim.resolvedCases() != null) {
+            sim.resolvedCases().forEach(c -> steps.addAll(extractSentences(c.resolutionComment())));
+        }
+        return steps.stream()
+                .map(this::cleanStep)
+                .filter(step -> !step.isBlank())
+                .distinct()
+                .limit(3)
+                .collect(Collectors.collectingAndThen(Collectors.toList(), list -> {
+                    if (list.isEmpty()) {
+                        return List.of("Изучить найденные статьи базы знаний", "Сравнить с похожими решёнными обращениями", "Назначить ответственного оператора");
+                    }
+                    return list;
+                }));
+    }
+
+    private List<String> extractSentences(String text) {
+        if (text == null || text.isBlank()) return List.of();
+        String normalized = text.replace('\n', ' ').replaceAll("\\s+", " ").trim();
+        return Arrays.stream(normalized.split("(?<=[.!?。])\\s+|;\\s*|(?<=\\.)"))
+                .map(String::trim)
+                .filter(s -> !s.isBlank())
+                .toList();
+    }
+
+    private String cleanStep(String step) {
+        return step.replaceAll("^[\\-•\\d.)\\s]+", "").trim();
+    }
+
+    private String inferRouting(SimilarResponse sim) {
+        if (sim.articles() != null && !sim.articles().isEmpty()) {
+            String category = sim.articles().get(0).category();
+            return "Очередь базы знаний: " + (category == null || category.isBlank() ? "GENERAL" : category);
+        }
+        return "Группа, решавшая наиболее похожий инцидент";
+    }
+
+    private record GroundedRecommendation(String recommendation, List<String> steps, boolean usedRagSources) {}
 
     private String fallbackReason(String status) {
         return switch (status == null ? "" : status) {
@@ -352,11 +490,14 @@ public class AiService {
     private String buildRagPrompt(String text, SimilarResponse sim) {
         StringBuilder sb = new StringBuilder();
         sb.append("Ты помощник техподдержки. Сформируй краткую рекомендацию по обращению: ").append(text).append("\n\n");
+        sb.append("Правило: сначала используй факты из релевантных статей базы знаний и решений похожих закрытых обращений. ")
+                .append("Не заменяй их общими советами, если источники найдены. Если источники противоречат общим правилам, приоритет у источников.\n\n");
         sb.append("Похожие решенные кейсы:\n");
         sim.resolvedCases().forEach(c -> sb.append("- ").append(c.title()).append(" [").append(c.fitPercent()).append("%]: ").append(c.resolutionComment()).append("\n"));
         sb.append("\nРелевантные статьи БЗ:\n");
-        sim.articles().forEach(a -> sb.append("- ").append(a).append("\n"));
-        sb.append("\nДополнительно верни маршрутизацию (очередь/группа) и первые 3 действия.");
+        sim.articles().forEach(a -> sb.append("- ").append(a.title()).append(" [").append(a.fitPercent()).append("%, ").append(a.category()).append("]: ").append(a.content()).append("\n"));
+        sb.append("\nВерни: краткую рекомендацию, маршрутизацию и первые 3 действия строго на основе этих источников. ")
+                .append("Если источников нет, явно напиши, что требуется ручная обработка оператором.");
         return sb.toString();
     }
 }

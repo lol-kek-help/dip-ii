@@ -1,5 +1,6 @@
 package com.example.giga_test;
 
+import com.example.giga_test.ai.dto.AiDtos;
 import com.example.giga_test.ai.integration.LlmJsonGateway;
 import com.example.giga_test.integration.LlmClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -7,6 +8,7 @@ import com.example.giga_test.ai.config.AiSearchProperties;
 import com.example.giga_test.ai.repository.KnowledgeBaseArticleRepository;
 import com.example.giga_test.ai.repository.VectorRecordRepository;
 import com.example.giga_test.ai.entity.VectorRecord;
+import com.example.giga_test.ai.entity.KnowledgeBaseArticle;
 import com.example.giga_test.audit.repository.AuditLogRepository;
 import com.example.giga_test.task.repository.TaskRepository;
 import com.example.giga_test.ticket.repository.AiRecommendationRepository;
@@ -27,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -109,6 +112,62 @@ public class AiServiceTest {
         assertEquals(1, result.size());
         assertEquals(100L, result.get(0).record().getSourceId());
         assertTrue(result.get(0).score() > 0.15);
+    }
+
+    @Test
+    void recommendShouldPreferKnowledgeBaseContentOverGenericLlmAdvice() {
+        LlmJsonGateway llmJsonGateway = Mockito.mock(LlmJsonGateway.class);
+        TaskRepository taskRepository = Mockito.mock(TaskRepository.class);
+        KnowledgeBaseArticleRepository articleRepository = Mockito.mock(KnowledgeBaseArticleRepository.class);
+        EmbeddingService embeddingService = Mockito.mock(EmbeddingService.class);
+        JdbcTemplate jdbcTemplate = Mockito.mock(JdbcTemplate.class);
+
+        KnowledgeBaseArticle article = new KnowledgeBaseArticle(
+                7L,
+                "Взорвалась машина",
+                "Если у вас взорвалась машина, немедленно начните танцевать и кричать \"ураааааа\".",
+                "GENERAL",
+                null,
+                null,
+                "system",
+                "system"
+        );
+        VectorRecord articleVector = VectorRecord.builder()
+                .id(7L)
+                .sourceType("KB")
+                .sourceId(7L)
+                .textContent(article.getTitle() + " " + article.getContent())
+                .embedding("0.1,0.2")
+                .embeddingProvider("LOCAL_HASH:SYN_V1")
+                .embeddingDimension(2)
+                .build();
+
+        when(embeddingService.topK("TASK", "Взорвалась машина\nкапец взорвалась", 25)).thenReturn(List.of());
+        when(embeddingService.topK("KB", "Взорвалась машина\nкапец взорвалась", 25))
+                .thenReturn(List.of(new EmbeddingService.ScoredVectorRecord(articleVector, 0.9)));
+        when(taskRepository.findAllById(any())).thenReturn(List.of());
+        when(articleRepository.findAllById(any())).thenReturn(List.of(article));
+        doReturn(List.of()).when(jdbcTemplate).query(anyString(), ArgumentMatchers.<RowMapper<AiDtos.SimilarItem>>any(), any(), any(), any());
+        when(llmJsonGateway.rerankTickets(anyString(), any())).thenReturn(java.util.Map.of());
+        when(llmJsonGateway.recommend(anyString())).thenReturn("Общая рекомендация: отойдите в безопасное место и позвоните 112.");
+
+        AiService service = new AiService(
+                llmJsonGateway,
+                taskRepository,
+                articleRepository,
+                embeddingService,
+                jdbcTemplate,
+                new AiSearchProperties(),
+                Mockito.mock(AiRecommendationRepository.class),
+                Mockito.mock(AuditLogRepository.class)
+        );
+
+        var response = service.recommend("Взорвалась машина\nкапец взорвалась");
+
+        assertTrue(response.recommendation().contains("танцевать"));
+        assertTrue(response.recommendation().contains("ураааааа"));
+        assertEquals("RAG_GROUNDED", response.explainability().mode());
+        assertTrue(response.steps().get(0).contains("танцевать"));
     }
 
     private String serialize(double[] vec) {
