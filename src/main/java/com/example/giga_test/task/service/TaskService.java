@@ -44,6 +44,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 @Service
@@ -180,48 +181,54 @@ public class TaskService {
             taskEntity.setDescription(request.description());
             shouldUpdateEmbedding = true;
         }
-        if (request.priority() != null) {
-            taskEntity.setPriority(request.priority());
+        Priority requestedPriority = parseEnum(request.priority(), Priority.class);
+        if (requestedPriority != null) {
+            taskEntity.setPriority(requestedPriority);
             shouldUpdateEmbedding = true;
         }
-        if (request.category() != null) {
-            taskEntity.setCategory(request.category());
+        Category requestedCategory = parseEnum(request.category(), Category.class);
+        if (requestedCategory != null) {
+            taskEntity.setCategory(requestedCategory);
             shouldUpdateEmbedding = true;
         }
-        if (request.resolutionDeadline() != null) {
+        LocalDateTime requestedDeadline = parseDateTime(request.resolutionDeadline());
+        if (requestedDeadline != null) {
             LocalDateTime now = LocalDateTime.now();
-            if (!request.resolutionDeadline().isAfter(now)) {
+            if (!requestedDeadline.isAfter(now)) {
                 throw new IllegalArgumentException("До дедлайна минимум должен быть 1 день");
             }
-            taskEntity.setResolutionDeadline(request.resolutionDeadline());
+            taskEntity.setResolutionDeadline(requestedDeadline);
         }
         if (request.resolutionComment() != null) {
             taskEntity.setResolutionComment(request.resolutionComment());
         }
-        if (request.requesterId() != null && actor.getRole() != RoleName.USER) {
-            var requester = userRepository.findById(request.requesterId())
+        Long requesterId = parseLong(request.requesterId());
+        if (requesterId != null && actor.getRole() != RoleName.USER) {
+            var requester = userRepository.findById(requesterId)
                     .orElseThrow(() -> new EntityNotFoundException("Инициатор не найден"));
             taskEntity.setRequester(requester);
         }
-        if (request.assigneeId() != null) {
+        Long assigneeId = parseLong(request.assigneeId());
+        if (assigneeId != null) {
             requireOperatorOrAdmin();
-            var assignee = userRepository.findById(request.assigneeId())
+            var assignee = userRepository.findById(assigneeId)
                     .orElseThrow(() -> new EntityNotFoundException("Исполнитель не найден"));
             if (assignee.getRole() != RoleName.OPERATOR && assignee.getRole() != RoleName.ADMIN) {
                 throw new IllegalArgumentException("Исполнителем может быть только оператор или администратор");
             }
             taskEntity.setAssignedTo(assignee);
         }
-        if (request.status() != null && request.status() != oldStatus) {
+        Status requestedStatus = parseEnum(request.status(), Status.class);
+        if (requestedStatus != null && requestedStatus != oldStatus) {
             requireOperatorOrAdmin();
-            validateTransition(oldStatus, request.status());
-            taskEntity.setStatus(request.status());
+            validateTransition(oldStatus, requestedStatus);
+            taskEntity.setStatus(requestedStatus);
         }
 
         taskEntity.setUpdatedAt(LocalDateTime.now());
         taskEntity.setUpdatedBy(actor.getUsername());
         TaskEntity saved = repository.save(taskEntity);
-        if (request.status() != null && request.status() != oldStatus) {
+        if (requestedStatus != null && requestedStatus != oldStatus) {
             slaService.onStatusChange(saved, saved.getStatus());
             writeStatusHistory(saved, oldStatus, saved.getStatus(), "Обновление обращения", actor);
         }
@@ -470,8 +477,15 @@ public class TaskService {
     }
 
     private TaskEntity getEntity(Long id) {
-        TaskEntity task = repository.findById(id).orElseThrow(() -> new EntityNotFoundException("No that id = " + id));
         User currentUser = currentUser();
+        var taskOptional = repository.findById(id);
+        if (taskOptional.isEmpty()) {
+            if (currentUser.getRole() == RoleName.USER) {
+                throw new AccessDeniedException("Нет доступа к чужому обращению");
+            }
+            throw new EntityNotFoundException("No that id = " + id);
+        }
+        TaskEntity task = taskOptional.get();
         if (currentUser.getRole() == RoleName.USER) {
             boolean requesterMatches = task.getRequester() != null && currentUser.getId().equals(task.getRequester().getId());
             boolean creatorMatches = currentUser.getUsername().equals(task.getCreatedBy());
@@ -546,6 +560,72 @@ public class TaskService {
 
     private String snapshot(TaskEntity e) {
         return "{id=" + e.getId() + ", status=" + e.getStatus() + ", category=" + e.getCategory() + ", priority=" + e.getPriority() + ", assignedTo=" + (e.getAssignedTo() == null ? null : e.getAssignedTo().getId()) + ", resolutionComment=" + e.getResolutionComment() + "}";
+    }
+
+    private <E extends Enum<E>> E parseEnum(Object rawValue, Class<E> enumClass) {
+        String normalized = enumToken(rawValue);
+        if (normalized == null || normalized.isBlank()) {
+            return null;
+        }
+        try {
+            return Enum.valueOf(enumClass, normalized.trim().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private Long parseLong(Object rawValue) {
+        if (rawValue == null) {
+            return null;
+        }
+        if (rawValue instanceof Number number) {
+            return number.longValue();
+        }
+        String token = enumToken(rawValue);
+        if (token == null || token.isBlank()) {
+            return null;
+        }
+        try {
+            return Long.parseLong(token.trim());
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private LocalDateTime parseDateTime(Object rawValue) {
+        if (rawValue == null) {
+            return null;
+        }
+        if (rawValue instanceof LocalDateTime value) {
+            return value;
+        }
+        String token = enumToken(rawValue);
+        if (token == null || token.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDateTime.parse(token.trim());
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private String enumToken(Object rawValue) {
+        if (rawValue == null) {
+            return null;
+        }
+        if (rawValue instanceof String value) {
+            return value;
+        }
+        if (rawValue instanceof Map<?, ?> map) {
+            for (String key : List.of("code", "name", "value", "id")) {
+                Object value = map.get(key);
+                if (value != null) {
+                    return String.valueOf(value);
+                }
+            }
+        }
+        return String.valueOf(rawValue);
     }
 
     private Task entityToTask(TaskEntity entity) {

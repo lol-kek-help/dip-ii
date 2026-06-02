@@ -138,7 +138,7 @@ class TaskServiceTest {
         when(taskRepository.save(any(TaskEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         var result = service.updateTask(100L, new UpdateTaskRequest(
-                "Обновленная тема", null, Priority.URGENT, Category.INCIDENT, null,
+                "Обновленная тема", null, "URGENT", "INCIDENT", null,
                 null, null, null, null
         ));
 
