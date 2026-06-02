@@ -147,13 +147,14 @@ public class GigaChatLlmClient implements LlmClient {
             return "AI service temporary unavailable; use manual triage.";
         }
     }
-
+    //получение и кэширование access-токена
     private synchronized String getOrRefreshAccessToken() {
         Instant now = Instant.now();
-        if (cachedAccessToken != null && tokenExpiresAt != null && now.isBefore(tokenExpiresAt.minusSeconds(60))) {
+        if (cachedAccessToken != null && tokenExpiresAt != null && now.isBefore(
+                tokenExpiresAt.minusSeconds(300))) {
             return cachedAccessToken;
         }
-
+        // формирование запроса, вызов authUrl
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
         headers.set("Accept", MediaType.APPLICATION_JSON_VALUE);

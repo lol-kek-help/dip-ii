@@ -29,6 +29,7 @@ public class LlmJsonGateway {
                 category: одно из [ACCESS, INCIDENT, GENERAL]
                 priority: одно из [LOW, MEDIUM, HIGH, URGENT]
                 rationale: краткое объяснение на русском языке.
+                Предложи коротко какой команде технической поддержки следует маршрутизировать.
                 Формат ответа:
                 {"category":"ACCESS","priority":"MEDIUM","rationale":"..."}
                 Текст обращения:
@@ -44,7 +45,7 @@ public class LlmJsonGateway {
                 if (!Set.of("LOW", "MEDIUM", "HIGH", "URGENT").contains(priority)) throw new IllegalArgumentException("priority out of contract");
                 return new LlmJsonResult(true, category, priority, root.get("rationale").asText(), raw, "OK");
             } catch (Exception ignored) {
-                // Try the next JSON object candidate. LLM may echo examples or produce malformed fragments before the final answer.
+                // TODO: исправить {}
             }
         }
         return new LlmJsonResult(false, null, null, null, raw, fallbackStatus(raw));
@@ -53,7 +54,7 @@ public class LlmJsonGateway {
     public String recommend(String prompt) {
         return llmClient.ask(prompt);
     }
-
+    //переоценка похожих случаев
     public Map<Long, Double> rerankTickets(String query, List<CandidateForRerank> candidates) {
         if (candidates == null || candidates.isEmpty()) return Map.of();
         StringBuilder prompt = new StringBuilder();
@@ -62,14 +63,18 @@ public class LlmJsonGateway {
                 Верни ТОЛЬКО JSON-массив без markdown.
                 Формат элемента: {"ticketId":123,"score":0.0}
                 score в диапазоне [0,1], больше = релевантнее.
+                Оценивай то, насколько кандидат близок к запросу пользователя.
+                Учитывай синонимы и общий смысл.
                 Верни максимум 10 элементов.
                 Запрос пользователя:
                 """).append(query).append("\nКандидаты:\n");
+        // добавление кандидатов
         for (CandidateForRerank c : candidates) {
             prompt.append("- ticketId=").append(c.ticketId())
                     .append("; title=").append(c.title())
                     .append("; summary=").append(c.summary()).append("\n");
         }
+        // валидация и построение Map<Long, Double>
         try {
             String raw = llmClient.ask(prompt.toString());
             JsonNode root = objectMapper.readTree(extractJsonObject(raw).replaceAll("^\\{\\s*\"items\"\\s*:\\s*", "[").replaceAll("\\}\\s*$", "]"));

@@ -1,7 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import { message } from 'antd';
 import { useAuthStore } from '../store/authStore';
-
+//добавление токена
 export const api = axios.create({ baseURL: import.meta.env.VITE_API_URL ?? 'http://localhost:8080' });
 
 let isRefreshing = false;
@@ -20,7 +20,8 @@ function errorText(error: AxiosError): string {
   return data?.details || data?.message || error.message || 'Ошибка запроса';
 }
 
-api.interceptors.response.use((r) => r, async (error: AxiosError) => {
+api.interceptors.response.use((r) =>
+    r, async (error: AxiosError) => {
   const original = error.config as (typeof error.config & { _retry?: boolean });
   if (error.response?.status === 401 && original && !original._retry) {
     original._retry = true;

@@ -229,7 +229,7 @@ public class AiService {
                 .map(v -> v.record().getSourceId())
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
-
+    //generation-фаза
     private String mapArticleHit(double vectorScore, String queryText, Set<String> queryHints, com.example.giga_test.ai.entity.KnowledgeBaseArticle article, boolean requireHints) {
         if (article == null) return null;
         String articleText = article.getTitle() + " " + article.getContent();
@@ -241,11 +241,13 @@ public class AiService {
 
     public RecommendResponse recommend(String text) {
         var sim = similar(text);
+        //сборка промпта
         String ragPrompt = buildRagPrompt(text, sim);
         String recommendation = llmJsonGateway.recommend(ragPrompt);
         String degradedReason = degradedRecommendationReason(recommendation);
         return new RecommendResponse(recommendation,
-                List.of("Проверить похожие кейсы: "+sim.resolvedCases().size(), "Определить маршрутизацию на 2-ю линию", "Подтвердить SLA и эскалацию"),
+                List.of("Проверить похожие кейсы: "+sim.resolvedCases().size(), "Определить маршрутизацию на 2-ю линию",
+                        "Подтвердить SLA и эскалацию"),
                 new Explainability(degradedReason == null ? "RAG_PLUS_LLM" : "RAG_PLUS_FALLBACK",
                         List.of("resolved_tickets", "knowledge_base", "vector_records"),
                         degradedReason == null ? "OK" : "DEGRADED", recommendation, degradedReason));
@@ -285,6 +287,7 @@ public class AiService {
         long total = recommendations.size();
         long evaluated = recommendations.stream().filter(r -> r.getAccepted() != null).count();
         long accepted = recommendations.stream().filter(r -> Boolean.TRUE.equals(r.getAccepted())).count();
+        //расчёт метрик качества
         double acceptanceRate = evaluated == 0 ? 0 : accepted * 100.0 / evaluated;
         double avgScore = recommendations.stream()
                 .filter(r -> r.getUsefulnessScore() != null)

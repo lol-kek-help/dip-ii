@@ -16,6 +16,7 @@ export function AppLayout() {
   const canOperate = role === 'OPERATOR' || role === 'ADMIN';
   const roleLabel = role === 'ADMIN' ? 'Администратор' : role === 'OPERATOR' ? 'Оператор' : 'Пользователь';
   const roleColor = role === 'ADMIN' ? 'red' : role === 'OPERATOR' ? 'blue' : 'green';
+  //Формирование пунктов меню в зависимости от роли
   const items = [
     { key: '/', icon: <DashboardOutlined />, label: <Link to='/'>Дашборд</Link> },
     { key: '/tickets', icon: <FileTextOutlined />, label: <Link to='/tickets'>Обращения</Link> },

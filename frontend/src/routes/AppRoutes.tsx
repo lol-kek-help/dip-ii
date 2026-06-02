@@ -9,14 +9,14 @@ import { KnowledgePage } from '../pages/KnowledgePage';
 import { AnalyticsPage } from '../pages/AnalyticsPage';
 import { AdminPage } from '../pages/AdminPage';
 import { useAuthStore } from '../store/authStore';
-
+//проверка токена и авторизации
 function Guard({ children, roles }: { children: JSX.Element; roles?: string[] }) {
   const { accessToken, role } = useAuthStore();
   if (!accessToken) return <Navigate to='/login' replace />;
   if (roles && (!role || !roles.includes(role))) return <Navigate to='/' replace />;
   return children;
 }
-
+//маршрутизация страниц
 export function AppRoutes() {
   return <Routes>
     <Route path='/login' element={<LoginPage />} />

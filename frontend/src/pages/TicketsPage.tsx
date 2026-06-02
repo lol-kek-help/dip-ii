@@ -14,7 +14,7 @@ interface TicketFilterFormValues {
   sortBy?: string;
   sortDir?: 'asc' | 'desc';
 }
-
+//состояние и загрузка списка обращений
 export function TicketsPage() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(false);
@@ -22,8 +22,9 @@ export function TicketsPage() {
   const [pageNumber, setPageNumber] = useState(0);
   const [pageSize, setPageSize] = useState(10);
   const [form] = Form.useForm<TicketFilterFormValues>();
-
-  const buildParams = (values: TicketFilterFormValues, nextPage = pageNumber, nextSize = pageSize): TicketFilter => {
+  //формирование параметров фильтрации
+  const buildParams = (values: TicketFilterFormValues, nextPage = pageNumber,
+                       nextSize = pageSize): TicketFilter => {
     const params: TicketFilter = { pageSize: nextSize, pageNumber: nextPage, sortBy: values.sortBy, sortDir: values.sortDir };
     if (values.status) params.status = values.status;
     if (values.category) params.category = values.category;
@@ -60,12 +61,14 @@ export function TicketsPage() {
       <Form.Item name='sortDir'><Select allowClear placeholder='Направление' style={{ width: 140 }} options={[{value:'asc',label:'По возр.'},{value:'desc',label:'По убыв.'}]} /></Form.Item>
       <Space><Button htmlType='submit' type='primary'>Применить</Button><Button onClick={() => { form.resetFields(); load(0, pageSize); }}>Сброс</Button></Space>
     </Form>
+    {/*Таблица обращений*/}
     <Table<Ticket>
       rowKey='id'
       loading={loading}
       style={{ marginTop: 16 }}
       dataSource={tickets}
-      pagination={{ current: pageNumber + 1, pageSize, total, showSizeChanger: true, onChange: (page, size) => load(page - 1, size) }}
+      pagination={{ current: pageNumber + 1, pageSize, total, showSizeChanger: true,
+        onChange: (page, size) => load(page - 1, size) }}
       locale={{ emptyText: 'Обращения не найдены' }}
       columns={[
         { title:'ID', dataIndex:'id' },

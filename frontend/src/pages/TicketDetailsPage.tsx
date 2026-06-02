@@ -45,9 +45,11 @@ export function TicketDetailsPage() {
   const text = useMemo(() => `${ticket?.title ?? ''}\n${ticket?.description ?? ''}`.trim(), [ticket]);
   const load = async () => {
     const [ticketData, commentsData, historyData, recommendationsData] = await Promise.all([
-      ticketApi.getById(ticketId), ticketApi.comments(ticketId), ticketApi.statusHistory(ticketId), ticketApi.aiRecommendations(ticketId)
+      ticketApi.getById(ticketId), ticketApi.comments(ticketId), ticketApi.statusHistory(ticketId),
+      ticketApi.aiRecommendations(ticketId)
     ]);
-    setTicket(ticketData); setComments(commentsData); setHistory(historyData); setSavedRecommendations(recommendationsData);
+    setTicket(ticketData); setComments(commentsData);
+    setHistory(historyData); setSavedRecommendations(recommendationsData);
   };
 
   useEffect(() => { if (ticketId) load(); }, [ticketId]);
@@ -150,10 +152,12 @@ export function TicketDetailsPage() {
 
           {similar && <Card size='small' title='Похожие обращения и источники' style={{ marginTop: 12 }}>
             <Typography.Text strong>Похожие обращения</Typography.Text>
-            {(similar.tickets ?? []).map((item) => <div key={item.ticketId}>#{item.ticketId} {item.title} ({Math.round(item.score * 100)}%)</div>)}
+            {(similar.tickets ?? []).map((item) =>
+                <div key={item.ticketId}>#{item.ticketId} {item.title} ({Math.round(item.score * 100)}%)</div>)}
             <Divider />
             <Typography.Text strong>Решённые кейсы</Typography.Text>
-            {(similar.resolvedCases ?? []).map((item) => <div key={`resolved-${item.ticketId}`}>#{item.ticketId} {item.title} ({item.fitPercent}%) — {item.resolutionComment}</div>)}
+            {(similar.resolvedCases ?? []).map((item) =>
+                <div key={`resolved-${item.ticketId}`}>#{item.ticketId} {item.title} ({item.fitPercent}%) — {item.resolutionComment}</div>)}
             <Divider />
             <Typography.Text strong>Статьи базы знаний</Typography.Text>
             {(similar.articles ?? []).map((article) => <div key={article}>{article}</div>)}
@@ -167,13 +171,18 @@ export function TicketDetailsPage() {
           </Card>}
 
           <Card size='small' style={{ marginTop: 12 }} title='Сохранённые AI-рекомендации'>
-            <List dataSource={savedRecommendations} locale={{ emptyText: 'Нет сохранённых рекомендаций' }} renderItem={(item) => <List.Item>
+            <List dataSource={savedRecommendations} locale={{ emptyText: 'Нет сохранённых рекомендаций' }} renderItem={
+              (item) => <List.Item>
               <Space direction='vertical' style={{ width: '100%' }}>
                 <Typography.Paragraph ellipsis={{ rows: 4, expandable: true }}>{prettyAiText(item.recommendation)}</Typography.Paragraph>
-                <ExplainabilityBlock explainability={{ mode: item.mode, sources: item.sources, llmStatus: item.llmStatus, rawModelOutput: item.rawModelOutput, fallbackReason: item.fallbackReason }} />
+                <ExplainabilityBlock explainability={{ mode: item.mode, sources: item.sources, llmStatus: item.llmStatus,
+                  rawModelOutput: item.rawModelOutput, fallbackReason: item.fallbackReason }} />
                 <Form form={feedbackForm} layout='inline' onFinish={async (values) => {
-                  const updated = await ticketApi.evaluateAiRecommendation(ticketId, item.id, { accepted: Boolean(values.accepted), usefulnessScore: values.usefulnessScore, feedbackComment: values.feedbackComment });
-                  setSavedRecommendations(savedRecommendations.map((r) => r.id === item.id ? updated : r));
+                  const updated = await ticketApi.evaluateAiRecommendation(ticketId, item.id, {
+                    accepted: Boolean(values.accepted), usefulnessScore: values.usefulnessScore,
+                    feedbackComment: values.feedbackComment });
+                  setSavedRecommendations(savedRecommendations.map((r) =>
+                      r.id === item.id ? updated : r));
                 }}>
                   <Form.Item name='accepted' label='Принята' valuePropName='checked'><Switch /></Form.Item>
                   <Form.Item name='usefulnessScore' label='Оценка'><Rate /></Form.Item>

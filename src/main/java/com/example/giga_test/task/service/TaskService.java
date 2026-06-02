@@ -288,12 +288,14 @@ public class TaskService {
     }
 
     @Transactional
+    //cохранение AI-рекомендации
     public SavedAiRecommendationDto saveAiRecommendation(Long id) {
         requireOperatorOrAdmin();
         User actor = currentUser();
         TaskEntity ticket = getEntity(id);
         AiDtos.RecommendResponse response = aiService.recommend((ticket.getTitle() + "\n" + ticket.getDescription()).trim());
         AiRecommendation entity = new AiRecommendation();
+        // заполнение полей из response
         entity.setTicket(ticket);
         entity.setRecommendation(response.recommendation());
         entity.setStepsJson(toJson(response.steps()));
@@ -306,7 +308,8 @@ public class TaskService {
         entity.setCreatedByUser(actor);
         entity.setCreatedAt(LocalDateTime.now());
         AiRecommendation saved = aiRecommendationRepository.save(entity);
-        writeAudit(ticket, "AI_RECOMMENDATION_SAVE", "AI-рекомендация сохранена", null, response.recommendation(), actor);
+        writeAudit(ticket, "AI_RECOMMENDATION_SAVE", "AI-рекомендация сохранена",
+                null, response.recommendation(), actor);
         return toAiRecommendationDto(saved);
     }
 
