@@ -137,6 +137,9 @@ public class GigaChatLlmClient implements LlmClient {
                 activateThrottle();
                 return "Квота GigaChat исчерпана (HTTP 429).";
             }
+            if (status == 402) {
+                return "GigaChat billing unavailable: Payment Required (HTTP 402). Проверьте оплату, баланс или доступ тарифа.";
+            }
             return "AI service temporary unavailable; use manual triage.";
         } catch (ResourceAccessException ex) {
             activateThrottle();

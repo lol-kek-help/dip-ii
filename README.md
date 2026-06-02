@@ -109,5 +109,7 @@ npm run preview
 
 Если `AI_LLM_ENABLED=false` (или не задано), используется деградированный `FallbackLlmClient`.
 
+Если реальный клиент GigaChat возвращает `HTTP 402 Payment Required`, проверьте оплату/баланс, доступность выбранного тарифа и модели (`GIGACHAT_MODEL`), либо временно выставьте `AI_LLM_ENABLED=false`, чтобы приложение продолжило работать на локальном fallback без LLM.
+
 ### Примечание по токенам
 `access_token` теперь обновляется автоматически внутри backend. В IDEA нужно хранить только `GIGACHAT_AUTH_KEY`, а не вручную обновлять `GIGACHAT_ACCESS_TOKEN`.

@@ -84,6 +84,18 @@ public class AiServiceTest {
         assertEquals("ошибка содержит {код} внутри текста", result.rationale());
     }
 
+
+    @Test
+    void classifyShouldExposePaymentRequiredStatus() {
+        LlmJsonGateway gateway = new LlmJsonGateway(fakeClient(
+                "GigaChat billing unavailable: Payment Required (HTTP 402). Проверьте оплату."
+        ), new ObjectMapper());
+
+        var result = gateway.classify("нет доступа");
+
+        assertEquals("PAYMENT_REQUIRED", result.status());
+    }
+
     @Test
     void localEmbeddingFallbackShouldMatchSynonyms() {
         VectorRecordRepository vectorRecordRepository = Mockito.mock(VectorRecordRepository.class);
