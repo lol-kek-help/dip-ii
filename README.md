@@ -69,6 +69,9 @@ npm run preview
 - `operator1` (роль `OPERATOR`)
 - `admin1` (роль `ADMIN`)
 
+## Документация для ВКР
+- Раздел 2.6 «Тестирование системы»: `docs/testing.md`
+
 ## Что реализовано на текущем этапе
 - JWT-аутентификация: `/auth/login`, `/auth/logout`, `/auth/refresh`
 - API обращений: `/tickets/**`
