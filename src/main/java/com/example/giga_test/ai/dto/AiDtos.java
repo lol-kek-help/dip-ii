@@ -5,7 +5,7 @@ import jakarta.validation.constraints.NotBlank;
 import java.util.List;
 
 public class AiDtos {
-    public record AiRequest(@NotBlank String text) {}
+    public record AiRequest(@NotBlank String text, String mode, List<String> sourceHints) {}
 
     public record Explainability(String mode, List<String> sources, String llmStatus, String rawModelOutput, String fallbackReason) {}
 

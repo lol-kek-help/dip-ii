@@ -112,6 +112,12 @@ public class TaskController {
         return ResponseEntity.status(HttpStatus.CREATED).body(ticketService.saveAiRecommendation(id));
     }
 
+    @PostMapping("/{id}/ai/recommendations/draft")
+    public ResponseEntity<SavedAiRecommendationDto> saveAiRecommendationDraft(@PathVariable Long id,
+                                                                              @RequestBody @Valid SaveAiRecommendationRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(ticketService.saveAiRecommendationDraft(id, request));
+    }
+
     @GetMapping("/{id}/ai/recommendations")
     public List<SavedAiRecommendationDto> aiRecommendations(@PathVariable Long id) {
         return ticketService.aiRecommendations(id);
