@@ -1,8 +1,8 @@
-import { Alert, Button, Card, Col, Descriptions, Divider, Form, Input, List, Rate, Row, Select, Space, Switch, Tag, Timeline, Typography, message } from 'antd';
+import { Alert, Button, Card, Col, Descriptions, Divider, Form, Input, List, Modal, Rate, Row, Select, Space, Switch, Tabs, Tag, Timeline, Typography, message } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { aiApi } from '../api/aiApi';
-import { categoryLabel, priorityLabel, statusLabel } from '../utils/formatters';
+import { categoryLabel, priorityColor, priorityLabel, statusColor, statusLabel } from '../utils/formatters';
 import { ticketApi } from '../api/ticketApi';
 import { useAuthStore } from '../store/authStore';
 import { Category, ClassifyResponse, Priority, RecommendResponse, SavedAiRecommendation, SimilarResponse, Ticket, TicketComment, TicketStatusHistory } from '../types/models';
@@ -37,12 +37,16 @@ export function TicketDetailsPage() {
   const [recommend, setRecommend] = useState<RecommendResponse>();
   const [savedRecommendations, setSavedRecommendations] = useState<SavedAiRecommendation[]>([]);
   const [aiLoading, setAiLoading] = useState<string>();
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [escalateOpen, setEscalateOpen] = useState(false);
   const [aiForm] = Form.useForm();
   const [commentForm] = Form.useForm<CommentFormValues>();
   const [closeForm] = Form.useForm<{ resolutionComment: string }>();
   const [escalateForm] = Form.useForm<{ reason: string }>();
 
   const text = useMemo(() => `${ticket?.title ?? ''}\n${ticket?.description ?? ''}`.trim(), [ticket]);
+  const lastComment = comments[0];
+  const lastHistory = history[0];
   const load = async () => {
     const [ticketData, commentsData, historyData, recommendationsData] = await Promise.all([
       ticketApi.getById(ticketId), ticketApi.comments(ticketId), ticketApi.statusHistory(ticketId),
@@ -111,6 +115,20 @@ export function TicketDetailsPage() {
     }
   };
 
+  const setInProgress = async () => setTicket(await ticketApi.changeStatus(ticketId, 'IN_PROGRESS', 'Взято в работу'));
+
+  const submitEscalation = async (values: { reason: string }) => {
+    setTicket(await ticketApi.escalate(ticketId, values.reason));
+    escalateForm.resetFields();
+    setEscalateOpen(false);
+  };
+
+  const submitClose = async (values: { resolutionComment: string }) => {
+    setTicket(await ticketApi.close(ticketId, values.resolutionComment));
+    closeForm.resetFields();
+    setCloseOpen(false);
+  };
+
   const renderSources = () => <Row gutter={[16, 16]}>
     <Col xs={24} lg={8}>
       <Card size='small' title='Похожие обращения' style={{ height: '100%' }}>
@@ -145,107 +163,150 @@ export function TicketDetailsPage() {
     </Col>
   </Row>;
 
-  return <Space direction='vertical' size={16} style={{ width: '100%' }}>
-    <Row gutter={[16, 16]} align='top'>
-      <Col xs={24} xl={16}>
-        <Card title={`Обращение #${ticket.id}`}>
-          <Descriptions column={{ xs: 1, md: 2 }}>
-            <Descriptions.Item label='Тема'>{ticket.title}</Descriptions.Item>
-            <Descriptions.Item label='Статус'>{statusLabel[ticket.status] ?? ticket.status}</Descriptions.Item>
-            <Descriptions.Item label='Категория'>{ticket.category ? (categoryLabel[ticket.category] ?? ticket.category) : '—'}</Descriptions.Item>
-            <Descriptions.Item label='Приоритет'>{ticket.priority ? (priorityLabel[ticket.priority] ?? ticket.priority) : '—'}</Descriptions.Item>
-            <Descriptions.Item label='Автор'>{ticket.requester?.name || ticket.requester?.username || '—'}</Descriptions.Item>
-            <Descriptions.Item label='Исполнитель'>{ticket.assignedTo?.name || ticket.assignedTo?.username || 'Не назначен'}</Descriptions.Item>
-            <Descriptions.Item label='Срок'>{ticket.resolutionDeadline ?? '—'}</Descriptions.Item>
-            <Descriptions.Item label='Описание' span={2}><Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>{ticket.description}</Typography.Paragraph></Descriptions.Item>
-            <Descriptions.Item label='Решение' span={2}>{ticket.resolutionComment || '—'}</Descriptions.Item>
-          </Descriptions>
-          {canOperate && <>
-            <Divider />
-            <Space wrap style={{ marginBottom: 12 }}>
-              <Button onClick={async () => setTicket(await ticketApi.changeStatus(ticketId, 'IN_PROGRESS', 'Взято в работу'))}>В работу</Button>
-            </Space>
-            <Space direction='vertical' style={{ width: '100%' }}>
-              <Form form={escalateForm} layout='inline' onFinish={async (v) => setTicket(await ticketApi.escalate(ticketId, v.reason))}>
-                <Form.Item name='reason' rules={[{ required: true, message: 'Укажите комментарий эскалации' }]}><Input placeholder='Комментарий для эскалации' /></Form.Item>
-                <Button htmlType='submit'>Эскалировать</Button>
-              </Form>
-              <Form form={closeForm} layout='inline' onFinish={async (v) => setTicket(await ticketApi.close(ticketId, v.resolutionComment))}>
-                <Form.Item name='resolutionComment' rules={[{ required: true, message: 'Укажите комментарий решения' }]}><Input placeholder='Комментарий закрытия' /></Form.Item>
-                <Button htmlType='submit' type='primary'>Закрыть</Button>
-              </Form>
-            </Space>
-          </>}
+  const overview = <Row gutter={[16, 16]} align='top'>
+    <Col xs={24} xl={16}>
+      <Card title='Детали обращения'>
+        <Descriptions column={{ xs: 1, md: 2 }}>
+          <Descriptions.Item label='Тема'>{ticket.title}</Descriptions.Item>
+          <Descriptions.Item label='Статус'><Tag color={statusColor[ticket.status]}>{statusLabel[ticket.status] ?? ticket.status}</Tag></Descriptions.Item>
+          <Descriptions.Item label='Категория'>{ticket.category ? (categoryLabel[ticket.category] ?? ticket.category) : '—'}</Descriptions.Item>
+          <Descriptions.Item label='Приоритет'>{ticket.priority ? <Tag color={priorityColor[ticket.priority]}>{priorityLabel[ticket.priority] ?? ticket.priority}</Tag> : '—'}</Descriptions.Item>
+          <Descriptions.Item label='Автор'>{ticket.requester?.name || ticket.requester?.username || '—'}</Descriptions.Item>
+          <Descriptions.Item label='Исполнитель'>{ticket.assignedTo?.name || ticket.assignedTo?.username || 'Не назначен'}</Descriptions.Item>
+          <Descriptions.Item label='Срок'>{ticket.resolutionDeadline ?? '—'}</Descriptions.Item>
+          <Descriptions.Item label='Описание' span={2}><Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>{ticket.description}</Typography.Paragraph></Descriptions.Item>
+          <Descriptions.Item label='Решение' span={2}>{ticket.resolutionComment || '—'}</Descriptions.Item>
+        </Descriptions>
+      </Card>
+    </Col>
+    <Col xs={24} xl={8}>
+      <Space direction='vertical' size={16} style={{ width: '100%' }}>
+        <Card title={`Комментарии: ${comments.length}`}>
+          {lastComment ? <List.Item>
+            <List.Item.Meta title={<Space>{lastComment.author.name || lastComment.author.username}{lastComment.internalComment && <Tag color='orange'>Внутренний</Tag>}</Space>} description={<><Typography.Paragraph ellipsis={{ rows: 3, expandable: true }}>{lastComment.commentText}</Typography.Paragraph><Typography.Text type='secondary'>{lastComment.createdAt}</Typography.Text></>} />
+          </List.Item> : <Typography.Text type='secondary'>Комментариев пока нет</Typography.Text>}
         </Card>
-      </Col>
+        <Card title={`События истории: ${history.length}`}>
+          {lastHistory ? <Timeline items={[{ children: <><b>{lastHistory.fromStatus ?? '—'} → {lastHistory.toStatus}</b><div>{lastHistory.reason || 'Без комментария'}</div><Typography.Text type='secondary'>{lastHistory.createdAt} · {lastHistory.changedBy?.username ?? 'система'}</Typography.Text></> }]} /> : <Typography.Text type='secondary'>Истории пока нет</Typography.Text>}
+        </Card>
+      </Space>
+    </Col>
+  </Row>;
 
-      <Col xs={24} xl={8}>
-        <Space direction='vertical' size={16} style={{ width: '100%' }}>
-          <Card title='Комментарии'>
-            <List dataSource={comments} locale={{ emptyText: 'Комментариев пока нет' }} renderItem={(comment) => <List.Item>
-              <List.Item.Meta title={<Space>{comment.author.name || comment.author.username}{comment.internalComment && <Tag color='orange'>Внутренний</Tag>}</Space>} description={<><div style={{ whiteSpace: 'pre-wrap' }}>{comment.commentText}</div><Typography.Text type='secondary'>{comment.createdAt}</Typography.Text></>} />
-            </List.Item>} />
-            <Divider />
-            <Form form={commentForm} layout='vertical' onFinish={addComment}>
-              <Form.Item name='commentText' label='Новый комментарий' rules={[{ required: true, message: 'Введите комментарий' }]}><Input.TextArea rows={3} /></Form.Item>
-              {canOperate && <Form.Item name='internalComment' label='Внутренний комментарий' valuePropName='checked'><Switch /></Form.Item>}
-              <Button htmlType='submit' type='primary'>Добавить комментарий</Button>
+  const commentsTab = <Card title='Комментарии'>
+    <Form form={commentForm} layout='vertical' onFinish={addComment}>
+      <Form.Item name='commentText' label='Новый комментарий' rules={[{ required: true, message: 'Введите комментарий' }]}><Input.TextArea rows={3} /></Form.Item>
+      {canOperate && <Form.Item name='internalComment' label='Внутренний комментарий' valuePropName='checked'><Switch /></Form.Item>}
+      <Button htmlType='submit' type='primary'>Добавить комментарий</Button>
+    </Form>
+    <Divider />
+    <div className='scrollable-panel'>
+      <List dataSource={comments} locale={{ emptyText: 'Комментариев пока нет' }} renderItem={(comment) => <List.Item>
+        <List.Item.Meta title={<Space>{comment.author.name || comment.author.username}{comment.internalComment && <Tag color='orange'>Внутренний</Tag>}</Space>} description={<><div style={{ whiteSpace: 'pre-wrap' }}>{comment.commentText}</div><Typography.Text type='secondary'>{comment.createdAt}</Typography.Text></>} />
+      </List.Item>} />
+    </div>
+  </Card>;
+
+  const historyTab = <Card title='История статусов'>
+    <Timeline items={history.map((h) => ({ children: <><b>{h.fromStatus ?? '—'} → {h.toStatus}</b><div>{h.reason || 'Без комментария'}</div><Typography.Text type='secondary'>{h.createdAt} · {h.changedBy?.username ?? 'система'}</Typography.Text></> }))} />
+  </Card>;
+
+  const aiTab = <Card title='ИИ-помощник' extra={<Tag color='purple'>RAG: база знаний + решённые инциденты</Tag>}>
+    {!canOperate && <Alert type='info' showIcon message='ИИ-помощник доступен оператору и администратору.' />}
+    {canOperate && <Space direction='vertical' size={16} style={{ width: '100%' }}>
+      <Alert showIcon type='info' message='Рекомендация строится в первую очередь по релевантным статьям базы знаний и похожим решённым обращениям. LLM используется только как слой формулировки и не должен подменять найденные источники.' />
+      <Space wrap>
+        <Button onClick={runClassification} loading={aiLoading === 'classify'}>Получить классификацию</Button>
+        <Button onClick={loadSources} loading={aiLoading === 'sources'}>Обновить источники RAG</Button>
+        <Button type='primary' onClick={saveAiRecommendation} loading={aiLoading === 'recommend'}>Сгенерировать и сохранить рекомендацию</Button>
+      </Space>
+      {classify && <Card size='small' title='Предложение классификации'>
+        <Row gutter={[16, 16]}>
+          <Col xs={24} md={10}>
+            <div>Категория: {categoryLabel[classify.category] ?? classify.category}</div>
+            <div>Приоритет: {priorityLabel[classify.priority] ?? classify.priority}</div>
+            <Typography.Paragraph>{classify.rationale}</Typography.Paragraph>
+          </Col>
+          <Col xs={24} md={14}>
+            <Form form={aiForm} onFinish={applyAi} layout='inline'>
+              <Form.Item name='category' label='Категория'><Select style={{ width: 160 }} allowClear options={['GENERAL','INCIDENT','ACCESS','BILLING'].map((value) => ({ value, label: categoryLabel[value as keyof typeof categoryLabel] }))} /></Form.Item>
+              <Form.Item name='priority' label='Приоритет'><Select style={{ width: 160 }} allowClear options={['LOW','MEDIUM','HIGH','URGENT'].map((value) => ({ value, label: priorityLabel[value as keyof typeof priorityLabel] }))} /></Form.Item>
+              <Button htmlType='submit' type='primary'>Принять</Button>
             </Form>
-          </Card>
+          </Col>
+        </Row>
+        <ExplainabilityBlock explainability={classify.explainability} />
+      </Card>}
+      {recommend && <Card size='small' title='Последняя сгенерированная рекомендация'>
+        <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>{prettyAiText(recommend.recommendation)}</Typography.Paragraph>
+        {!!recommend.steps?.length && <><Divider /><Typography.Text strong>Первые действия из источников</Typography.Text><ol>{recommend.steps.map((step, index) => <li key={index}>{step}</li>)}</ol></>}
+        <ExplainabilityBlock explainability={recommend.explainability} />
+      </Card>}
+    </Space>}
+  </Card>;
 
-          <Card title='История статусов'>
-            <Timeline items={history.map((h) => ({ children: <><b>{h.fromStatus ?? '—'} → {h.toStatus}</b><div>{h.reason || 'Без комментария'}</div><Typography.Text type='secondary'>{h.createdAt} · {h.changedBy?.username ?? 'система'}</Typography.Text></> }))} />
-          </Card>
+  const sourcesTab = <Card title='Источники для рекомендации'>
+    <Space direction='vertical' size={16} style={{ width: '100%' }}>
+      <Space wrap>
+        <Button onClick={loadSources} loading={aiLoading === 'sources'}>Обновить источники RAG</Button>
+        <Button type='primary' onClick={saveAiRecommendation} loading={aiLoading === 'recommend'} disabled={!canOperate}>Сгенерировать рекомендацию</Button>
+      </Space>
+      {similar ? <>{renderSources()}<ExplainabilityBlock explainability={similar.explainability} /></> : <Alert showIcon type='info' message='Источники ещё не загружены. Нажмите «Обновить источники RAG».' />}
+    </Space>
+  </Card>;
+
+  const recommendationsTab = <Card title='Сохранённые AI-рекомендации'>
+    <List dataSource={savedRecommendations} locale={{ emptyText: 'Нет сохранённых рекомендаций' }} renderItem={
+      (item) => <SavedRecommendationItem item={item} ticketId={ticketId} onUpdated={(updated) => setSavedRecommendations(savedRecommendations.map((r) => r.id === item.id ? updated : r))} />
+    } />
+  </Card>;
+
+  return <Space direction='vertical' size={16} style={{ width: '100%' }}>
+    <Card className='quick-actions-panel'>
+      <Space direction='vertical' size={12} style={{ width: '100%' }}>
+        <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
+          <div>
+            <Typography.Title level={3} style={{ margin: 0 }}>Обращение #{ticket.id}</Typography.Title>
+            <Typography.Text type='secondary'>{ticket.title}</Typography.Text>
+          </div>
+          <Space wrap>
+            <Tag color={statusColor[ticket.status]}>{statusLabel[ticket.status] ?? ticket.status}</Tag>
+            {ticket.priority && <Tag color={priorityColor[ticket.priority]}>{priorityLabel[ticket.priority] ?? ticket.priority}</Tag>}
+            {ticket.category && <Tag>{categoryLabel[ticket.category] ?? ticket.category}</Tag>}
+          </Space>
         </Space>
-      </Col>
-    </Row>
-
-    <Card title='ИИ-помощник' extra={<Tag color='purple'>RAG: база знаний + решённые инциденты</Tag>}>
-      {!canOperate && <Alert type='info' showIcon message='ИИ-помощник доступен оператору и администратору.' />}
-      {canOperate && <Space direction='vertical' size={16} style={{ width: '100%' }}>
-        <Alert showIcon type='info' message='Рекомендация строится в первую очередь по релевантным статьям базы знаний и похожим решённым обращениям. LLM используется только как слой формулировки и не должен подменять найденные источники.' />
-        <Space wrap>
-          <Button onClick={runClassification} loading={aiLoading === 'classify'}>Получить классификацию</Button>
-          <Button onClick={loadSources} loading={aiLoading === 'sources'}>Обновить источники RAG</Button>
-          <Button type='primary' onClick={saveAiRecommendation} loading={aiLoading === 'recommend'}>Сгенерировать и сохранить рекомендацию</Button>
-        </Space>
-
-        {classify && <Card size='small' title='Предложение классификации'>
-          <Row gutter={[16, 16]}>
-            <Col xs={24} md={10}>
-              <div>Категория: {categoryLabel[classify.category] ?? classify.category}</div>
-              <div>Приоритет: {priorityLabel[classify.priority] ?? classify.priority}</div>
-              <Typography.Paragraph>{classify.rationale}</Typography.Paragraph>
-            </Col>
-            <Col xs={24} md={14}>
-              <Form form={aiForm} onFinish={applyAi} layout='inline'>
-                <Form.Item name='category' label='Категория'><Select style={{ width: 160 }} allowClear options={['GENERAL','INCIDENT','ACCESS','BILLING'].map((value) => ({ value, label: categoryLabel[value as keyof typeof categoryLabel] }))} /></Form.Item>
-                <Form.Item name='priority' label='Приоритет'><Select style={{ width: 160 }} allowClear options={['LOW','MEDIUM','HIGH','URGENT'].map((value) => ({ value, label: priorityLabel[value as keyof typeof priorityLabel] }))} /></Form.Item>
-                <Button htmlType='submit' type='primary'>Принять</Button>
-              </Form>
-            </Col>
-          </Row>
-          <ExplainabilityBlock explainability={classify.explainability} />
-        </Card>}
-
-        {similar && <Card size='small' title='Источники для рекомендации'>
-          {renderSources()}
-          <ExplainabilityBlock explainability={similar.explainability} />
-        </Card>}
-
-        {recommend && <Card size='small' title='Последняя сгенерированная рекомендация'>
-          <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>{prettyAiText(recommend.recommendation)}</Typography.Paragraph>
-          {!!recommend.steps?.length && <><Divider /><Typography.Text strong>Первые действия из источников</Typography.Text><ol>{recommend.steps.map((step, index) => <li key={index}>{step}</li>)}</ol></>}
-          <ExplainabilityBlock explainability={recommend.explainability} />
-        </Card>}
-
-        <Card size='small' title='Сохранённые AI-рекомендации'>
-          <List dataSource={savedRecommendations} locale={{ emptyText: 'Нет сохранённых рекомендаций' }} renderItem={
-            (item) => <SavedRecommendationItem item={item} ticketId={ticketId} onUpdated={(updated) => setSavedRecommendations(savedRecommendations.map((r) => r.id === item.id ? updated : r))} />
-          } />
-        </Card>
-      </Space>}
+        {canOperate && <Space wrap>
+          <Button onClick={setInProgress}>В работу</Button>
+          <Button onClick={() => setEscalateOpen(true)}>Эскалировать</Button>
+          <Button type='primary' onClick={() => setCloseOpen(true)}>Закрыть</Button>
+          <Button onClick={runClassification} loading={aiLoading === 'classify'}>Классификация</Button>
+          <Button onClick={loadSources} loading={aiLoading === 'sources'}>Источники RAG</Button>
+          <Button type='primary' onClick={saveAiRecommendation} loading={aiLoading === 'recommend'}>Сгенерировать рекомендацию</Button>
+        </Space>}
+      </Space>
     </Card>
+
+    <Tabs defaultActiveKey='overview' items={[
+      { key: 'overview', label: 'Обзор', children: overview },
+      { key: 'comments', label: `Комментарии (${comments.length})`, children: commentsTab },
+      { key: 'history', label: `История (${history.length})`, children: historyTab },
+      { key: 'ai', label: 'ИИ-помощник', children: aiTab },
+      { key: 'sources', label: 'Источники RAG', children: sourcesTab },
+      { key: 'recommendations', label: `Рекомендации (${savedRecommendations.length})`, children: recommendationsTab }
+    ]} />
+
+    <Modal title='Эскалация обращения' open={escalateOpen} onCancel={() => setEscalateOpen(false)} footer={null}>
+      <Form form={escalateForm} layout='vertical' onFinish={submitEscalation}>
+        <Form.Item name='reason' label='Комментарий для эскалации' rules={[{ required: true, message: 'Укажите комментарий эскалации' }]}><Input.TextArea rows={4} /></Form.Item>
+        <Button htmlType='submit' type='primary'>Эскалировать</Button>
+      </Form>
+    </Modal>
+    <Modal title='Закрытие обращения' open={closeOpen} onCancel={() => setCloseOpen(false)} footer={null}>
+      <Form form={closeForm} layout='vertical' onFinish={submitClose}>
+        <Form.Item name='resolutionComment' label='Комментарий решения' rules={[{ required: true, message: 'Укажите комментарий решения' }]}><Input.TextArea rows={4} /></Form.Item>
+        <Button htmlType='submit' type='primary'>Закрыть обращение</Button>
+      </Form>
+    </Modal>
   </Space>;
 }
 
