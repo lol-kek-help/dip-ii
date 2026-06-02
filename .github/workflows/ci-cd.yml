@@ -1,0 +1,142 @@
+name: CI/CD
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '17'
+  NODE_VERSION: '22'
+
+jobs:
+  backend-tests:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: root
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_URL: jdbc:postgresql://localhost:5432/postgres
+      DB_USER: postgres
+      DB_PASSWORD: root
+      JWT_SECRET: ci-secret-ci-secret-ci-secret-ci-secret-1234567890
+      AI_LLM_ENABLED: 'false'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Run backend tests
+        run: mvn -B test
+
+      - name: Upload backend test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: |
+            target/surefire-reports/
+            target/site/jacoco/
+          if-no-files-found: ignore
+
+  frontend-tests:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Upload frontend build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          if-no-files-found: ignore
+
+  delivery:
+    name: Delivery artifacts
+    runs-on: ubuntu-latest
+    needs:
+      - backend-tests
+      - frontend-tests
+    env:
+      DB_URL: jdbc:postgresql://localhost:5432/postgres
+      DB_USER: postgres
+      DB_PASSWORD: root
+      JWT_SECRET: ci-secret-ci-secret-ci-secret-ci-secret-1234567890
+      AI_LLM_ENABLED: 'false'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Package backend after successful tests
+        run: mvn -B -DskipTests package
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend after successful tests
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload delivery artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: delivery-${{ github.sha }}
+          path: |
+            target/*.jar
+            frontend/dist/
+          if-no-files-found: error
