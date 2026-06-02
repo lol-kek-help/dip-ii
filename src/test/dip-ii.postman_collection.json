@@ -1,0 +1,421 @@
+{
+  "info": {
+    "_postman_id": "554ac926-02a9-484c-bd5c-13569fe3b6e6",
+    "name": "dip-ii",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "54441344",
+    "_collection_link": "https://go.postman.co/collection/54441344-554ac926-02a9-484c-bd5c-13569fe3b6e6?source=collection_link"
+  },
+  "item": [
+    {
+      "name": "auth",
+      "item": [
+        {
+          "name": "Логин (получить JWT)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const j = pm.response.json();",
+                  "pm.environment.set(\"accessToken\", j.accessToken);",
+                  "pm.environment.set(\"refreshToken\", j.refreshToken);",
+                  "pm.test(\"Status 200\", () => pm.response.to.have.status(200));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin1\",\n  \"password\": \"password\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "Refresh",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.expect(j.accessToken).to.be.a(\"string\");",
+                  "pm.expect(j.refreshToken).to.be.a(\"string\");",
+                  "pm.environment.set(\"accessToken\", j.accessToken);",
+                  "pm.environment.set(\"refreshToken\", j.refreshToken);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "refresh"] }
+          }
+        },
+        {
+          "name": "Выход",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth", "logout"] }
+          }
+        },
+        {
+          "name": "me",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/users/me", "host": ["{{baseUrl}}"], "path": ["users", "me"] }
+          }
+        },
+        {
+          "name": "users (устаревший, дубль)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": { "raw": "{{baseUrl}}/users/me", "host": ["{{baseUrl}}"], "path": ["users", "me"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "tickets",
+      "item": [
+        {
+          "name": "фильтрация",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/tickets?pageNumber=0&status=NEW&pageSize=10&sortBy=createdAt&sortDir=desc",
+              "host": ["{{baseUrl}}"],
+              "path": ["tickets"],
+              "query": [
+                { "key": "status", "value": "NEW" },
+                { "key": "pageNumber", "value": "0" },
+                { "key": "pageSize", "value": "10" },
+                { "key": "sortBy", "value": "createdAt" },
+                { "key": "sortDir", "value": "desc" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "create",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.expect(body).to.have.property(\"id\");",
+                  "pm.environment.set(\"ticketId\", String(body.id));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Ошибка в корпоративной почте\",\n  \"description\": \"После обновления системы возникла ошибка\",\n  \"priority\": \"HIGH\",\n  \"category\": \"ACCESS\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/tickets", "host": ["{{baseUrl}}"], "path": ["tickets"] }
+          }
+        },
+        {
+          "name": "назначить",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"assigneeId\": 3}" },
+            "url": { "raw": "{{baseUrl}}/tickets/{{ticketId}}/assignee", "host": ["{{baseUrl}}"], "path": ["tickets", "{{ticketId}}", "assignee"] }
+          }
+        },
+        {
+          "name": "getById",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/tickets/{{ticketId}}", "host": ["{{baseUrl}}"], "path": ["tickets", "{{ticketId}}"] }
+          }
+        },
+        {
+          "name": "история статусов",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/tickets/{{ticketId}}/status-history", "host": ["{{baseUrl}}"], "path": ["tickets", "{{ticketId}}", "status-history"] }
+          }
+        },
+        {
+          "name": "status",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"status\":\"IN_PROGRESS\",\"reason\":\"Взято в работу\"}" },
+            "url": { "raw": "{{baseUrl}}/tickets/{{ticketId}}/status", "host": ["{{baseUrl}}"], "path": ["tickets", "{{ticketId}}", "status"] }
+          }
+        },
+        {
+          "name": "эскалация",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"reason\":\"Требуется 2-я линия\"}" },
+            "url": { "raw": "{{baseUrl}}/tickets/{{ticketId}}/escalate", "host": ["{{baseUrl}}"], "path": ["tickets", "{{ticketId}}", "escalate"] }
+          }
+        },
+        {
+          "name": "закрытие",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"resolutionComment\":\"тест пройден\"}" },
+            "url": { "raw": "{{baseUrl}}/tickets/{{ticketId}}/close", "host": ["{{baseUrl}}"], "path": ["tickets", "{{ticketId}}", "close"] }
+          }
+        },
+        {
+          "name": "комментарий",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"commentText\": \"Проблема воспроизводится при мобильном интернете\",\n  \"internalComment\": false\n}" },
+            "url": { "raw": "{{baseUrl}}/tickets/{{ticketId}}/comments", "host": ["{{baseUrl}}"], "path": ["tickets", "{{ticketId}}", "comments"] }
+          }
+        },
+        {
+          "name": "Обновить заявку",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Приоритет обновлён на URGENT\", () => pm.expect(body.priority).to.eql('URGENT'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"priority\":\"URGENT\",\"category\":\"HARDWARE\"}" },
+            "url": { "raw": "{{baseUrl}}/tickets/{{ticketId}}", "host": ["{{baseUrl}}"], "path": ["tickets", "{{ticketId}}"] }
+          }
+        },
+        {
+          "name": "Удалить заявку (админ)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status 204 No Content\", () => pm.response.to.have.status(204));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/tickets/{{ticketId}}", "host": ["{{baseUrl}}"], "path": ["tickets", "{{ticketId}}"] }
+          }
+        },
+        {
+          "name": "Чужая заявка (доступ запрещён)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status 403 Forbidden\", () => pm.response.to.have.status(403));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/tickets/99999", "host": ["{{baseUrl}}"], "path": ["tickets", "99999"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "sla",
+      "item": [
+        {
+          "name": "report",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/sla/report?from=2026-05-01T00:00:00&to=2026-05-31T23:59:59",
+              "host": ["{{baseUrl}}"],
+              "path": ["sla", "report"],
+              "query": [
+                { "key": "from", "value": "2026-05-01T00:00:00" },
+                { "key": "to", "value": "2026-05-31T23:59:59" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ai",
+      "item": [
+        {
+          "name": "AI classify",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Время ответа AI < 500 мс\", () => {",
+                  "  pm.expect(pm.response.responseTime).to.be.below(500);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"text\":\"Не могу войти в систему, пишет ошибка доступа\"}" },
+            "url": { "raw": "{{baseUrl}}/ai/classify", "host": ["{{baseUrl}}"], "path": ["ai", "classify"] }
+          }
+        },
+        {
+          "name": "Similar",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\"text\":\"загорелась машина\"}" },
+            "url": { "raw": "{{baseUrl}}/ai/similar", "host": ["{{baseUrl}}"], "path": ["ai", "similar"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "users (admin)",
+      "item": [
+        {
+          "name": "Список пользователей (админ)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Ответ - массив\", () => pm.expect(pm.response.json()).to.be.an('array'));",
+                  "pm.test(\"Найден user1\", () => {",
+                  "  const users = pm.response.json();",
+                  "  pm.expect(users.some(u => u.username === 'user1')).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/users", "host": ["{{baseUrl}}"], "path": ["users"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "non-functional",
+      "item": [
+        {
+          "name": "Rate limit (пагинация с большим pageSize)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Статус 200 или 429\", () => {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 429]);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test(\"Время ответа < 300 мс при большой выборке\", () => {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(300);",
+                  "  });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/tickets?pageSize=100",
+              "host": ["{{baseUrl}}"],
+              "path": ["tickets"],
+              "query": [{ "key": "pageSize", "value": "100" }]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "ticketId", "value": "" }
+  ]
+}
