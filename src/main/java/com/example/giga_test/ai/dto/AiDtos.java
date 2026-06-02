@@ -12,6 +12,7 @@ public class AiDtos {
     public record ClassifyResponse(String category, String priority, String rationale, Explainability explainability) {}
     public record SimilarItem(Long ticketId, String title, double score) {}
     public record ResolvedCaseItem(Long ticketId, String title, double fitPercent, String resolutionComment) {}
-    public record SimilarResponse(List<SimilarItem> tickets, List<ResolvedCaseItem> resolvedCases, List<String> articles, Explainability explainability) {}
+    public record KnowledgeArticleItem(Long articleId, String title, double fitPercent, String content, String category) {}
+    public record SimilarResponse(List<SimilarItem> tickets, List<ResolvedCaseItem> resolvedCases, List<KnowledgeArticleItem> articles, Explainability explainability) {}
     public record RecommendResponse(String recommendation, List<String> steps, Explainability explainability) {}
 }

@@ -5,6 +5,7 @@ import com.example.giga_test.model.Task;
 import com.example.giga_test.task.dto.CreateTaskRequest;
 import com.example.giga_test.task.dto.TaskSearchFilter;
 import com.example.giga_test.task.dto.UpdateClassificationRequest;
+import com.example.giga_test.task.dto.UpdateTaskRequest;
 import com.example.giga_test.task.dto.TicketLifecycleDtos.*;
 import com.example.giga_test.task.service.TaskService;
 import com.example.giga_test.ticket.dto.*;
@@ -49,6 +50,22 @@ public class TaskController {
 
     @PostMapping
     public ResponseEntity<Task> createTicket(@RequestBody @Valid CreateTaskRequest request){ return ResponseEntity.status(HttpStatus.CREATED).body(ticketService.createTask(request)); }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<Task> updateTicket(@PathVariable Long id, @RequestBody @Valid UpdateTaskRequest request) {
+        return ResponseEntity.ok(ticketService.updateTask(id, request));
+    }
+
+    @PatchMapping("/{id}")
+    public ResponseEntity<Task> patchTicket(@PathVariable Long id, @RequestBody @Valid UpdateTaskRequest request) {
+        return ResponseEntity.ok(ticketService.updateTask(id, request));
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteTicket(@PathVariable Long id) {
+        ticketService.deleteTask(id);
+        return ResponseEntity.noContent().build();
+    }
 
     @PatchMapping("/{id}/status")
     public ResponseEntity<Task> changeStatus(@PathVariable Long id, @RequestBody @Valid ChangeStatusRequest request) {

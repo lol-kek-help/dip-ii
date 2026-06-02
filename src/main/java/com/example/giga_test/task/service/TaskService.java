@@ -12,6 +12,7 @@ import com.example.giga_test.notification.service.NotificationService;
 import com.example.giga_test.sla.service.SlaService;
 import com.example.giga_test.task.dto.CreateTaskRequest;
 import com.example.giga_test.task.dto.TaskSearchFilter;
+import com.example.giga_test.task.dto.UpdateTaskRequest;
 import com.example.giga_test.task.entity.TaskEntity;
 import com.example.giga_test.task.repository.TaskRepository;
 import com.example.giga_test.ticket.dto.*;
@@ -49,7 +50,7 @@ import java.util.Objects;
 public class TaskService {
     private static final Logger log = LoggerFactory.getLogger(TaskService.class);
     private static final int DEFAULT_PAGE_SIZE = 10;
-    private static final int MAX_PAGE_SIZE = 100;
+    private static final int MAX_PAGE_SIZE = 50;
 
     private final TaskRepository repository;
     private final UserRepository userRepository;
@@ -156,6 +157,91 @@ public class TaskService {
         notificationService.notify(requester, "Обращение создано",
                 "Создано обращение #" + savedEntity.getId() + ": " + savedEntity.getTitle());
         return entityToTask(savedEntity);
+    }
+
+
+    @Transactional
+    public Task updateTask(Long id, UpdateTaskRequest request) {
+        User actor = currentUser();
+        TaskEntity taskEntity = getEntity(id);
+        if (actor.getRole() == RoleName.USER && taskEntity.getStatus() != Status.NEW && taskEntity.getStatus() != Status.UNASSIGNED) {
+            throw new AccessDeniedException("Пользователь может редактировать только новые необработанные обращения");
+        }
+
+        String before = snapshot(taskEntity);
+        Status oldStatus = taskEntity.getStatus();
+        boolean shouldUpdateEmbedding = false;
+
+        if (request.title() != null) {
+            taskEntity.setTitle(request.title());
+            shouldUpdateEmbedding = true;
+        }
+        if (request.description() != null) {
+            taskEntity.setDescription(request.description());
+            shouldUpdateEmbedding = true;
+        }
+        if (request.priority() != null) {
+            taskEntity.setPriority(request.priority());
+            shouldUpdateEmbedding = true;
+        }
+        if (request.category() != null) {
+            taskEntity.setCategory(request.category());
+            shouldUpdateEmbedding = true;
+        }
+        if (request.resolutionDeadline() != null) {
+            LocalDateTime now = LocalDateTime.now();
+            if (!request.resolutionDeadline().isAfter(now)) {
+                throw new IllegalArgumentException("До дедлайна минимум должен быть 1 день");
+            }
+            taskEntity.setResolutionDeadline(request.resolutionDeadline());
+        }
+        if (request.resolutionComment() != null) {
+            taskEntity.setResolutionComment(request.resolutionComment());
+        }
+        if (request.requesterId() != null && actor.getRole() != RoleName.USER) {
+            var requester = userRepository.findById(request.requesterId())
+                    .orElseThrow(() -> new EntityNotFoundException("Инициатор не найден"));
+            taskEntity.setRequester(requester);
+        }
+        if (request.assigneeId() != null) {
+            requireOperatorOrAdmin();
+            var assignee = userRepository.findById(request.assigneeId())
+                    .orElseThrow(() -> new EntityNotFoundException("Исполнитель не найден"));
+            if (assignee.getRole() != RoleName.OPERATOR && assignee.getRole() != RoleName.ADMIN) {
+                throw new IllegalArgumentException("Исполнителем может быть только оператор или администратор");
+            }
+            taskEntity.setAssignedTo(assignee);
+        }
+        if (request.status() != null && request.status() != oldStatus) {
+            requireOperatorOrAdmin();
+            validateTransition(oldStatus, request.status());
+            taskEntity.setStatus(request.status());
+        }
+
+        taskEntity.setUpdatedAt(LocalDateTime.now());
+        taskEntity.setUpdatedBy(actor.getUsername());
+        TaskEntity saved = repository.save(taskEntity);
+        if (request.status() != null && request.status() != oldStatus) {
+            slaService.onStatusChange(saved, saved.getStatus());
+            writeStatusHistory(saved, oldStatus, saved.getStatus(), "Обновление обращения", actor);
+        }
+        if (shouldUpdateEmbedding) {
+            embeddingService.upsertTaskEmbedding(saved);
+        }
+        writeAudit(saved, "UPDATE", "Обращение обновлено", before, snapshot(saved), actor);
+        return entityToTask(saved);
+    }
+
+    @Transactional
+    public void deleteTask(Long id) {
+        User actor = currentUser();
+        if (actor.getRole() != RoleName.ADMIN) {
+            throw new AccessDeniedException("Удаление обращений доступно только администратору");
+        }
+        TaskEntity taskEntity = repository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("No that id = " + id));
+        writeAudit(taskEntity, "DELETE", "Обращение удалено", snapshot(taskEntity), null, actor);
+        repository.delete(taskEntity);
     }
 
     @Transactional
@@ -390,7 +476,7 @@ public class TaskService {
             boolean requesterMatches = task.getRequester() != null && currentUser.getId().equals(task.getRequester().getId());
             boolean creatorMatches = currentUser.getUsername().equals(task.getCreatedBy());
             if (!requesterMatches && !creatorMatches) {
-                throw new EntityNotFoundException("No that id = " + id);
+                throw new AccessDeniedException("Нет доступа к чужому обращению");
             }
         }
         return task;
