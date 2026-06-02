@@ -408,6 +408,27 @@ public class TaskService {
         return toAiRecommendationDto(saved);
     }
 
+    @Transactional
+    public SavedAiRecommendationDto saveAiRecommendationDraft(Long id, SaveAiRecommendationRequest request) {
+        requireOperatorOrAdmin();
+        User actor = currentUser();
+        TaskEntity ticket = getEntity(id);
+        AiRecommendation entity = new AiRecommendation();
+        entity.setTicket(ticket);
+        entity.setRecommendation(request.recommendation());
+        entity.setStepsJson(toJson(request.steps() == null ? List.of() : request.steps()));
+        entity.setMode(request.mode());
+        entity.setSourcesJson(toJson(request.sources() == null ? List.of() : request.sources()));
+        entity.setLlmStatus(request.llmStatus());
+        entity.setRawModelOutput(request.rawModelOutput());
+        entity.setCreatedByUser(actor);
+        entity.setCreatedAt(LocalDateTime.now());
+        AiRecommendation saved = aiRecommendationRepository.save(entity);
+        writeAudit(ticket, "AI_RECOMMENDATION_SAVE_DRAFT", "AI-рекомендация сохранена из черновика",
+                null, request.recommendation(), actor);
+        return toAiRecommendationDto(saved);
+    }
+
     @Transactional(readOnly = true)
     public List<SavedAiRecommendationDto> aiRecommendations(Long id) {
         TaskEntity ticket = getEntity(id);
