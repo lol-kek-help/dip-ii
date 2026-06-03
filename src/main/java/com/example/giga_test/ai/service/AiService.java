@@ -40,7 +40,7 @@ public class AiService {
     }
 
     public ClassifyResponse classify(String text) {
-        String lc = text.toLowerCase(Locale.ROOT);
+        String lc = (text == null ? "" : text).toLowerCase(Locale.ROOT);
         String fallbackCategory = lc.contains("доступ") ? "ACCESS" : lc.contains("инцид") ? "INCIDENT" : "GENERAL";
         String fallbackPriority = lc.contains("крит") || lc.contains("простой") ? "URGENT" : "MEDIUM";
 
@@ -135,7 +135,7 @@ public class AiService {
         );
 
         var vector = taskVectors.stream()
-                .map(v -> new SimilarItem(v.record().getSourceId(), "", Math.max(0.0, v.score())))
+                .map(v -> new SimilarItem(v.record().getSourceId(), "", clampScore(v.score())))
                 .toList();
 
         final Set<String> retrievalHints = extractHintTokens(query, category);
@@ -162,7 +162,7 @@ public class AiService {
                     if (t == null) return null;
                     String text = t.getTitle() + " " + (t.getDescription() == null ? "" : t.getDescription());
                     double lexical = score(query, text);
-                    double boosted = e.getValue() + lexical * searchProperties.getLexicalWeight() + keywordBoost(query, text);
+                    double boosted = clampScore(e.getValue() + lexical * searchProperties.getLexicalWeight() + keywordBoost(query, text));
                     if (boosted < searchProperties.getMinRelevanceScore()) return null;
                     return new SimilarItem(t.getId(), t.getTitle(), boosted);
                 })
@@ -184,8 +184,8 @@ public class AiService {
         }
         return pre.stream()
                 .map(i -> {
-                    double llmScore = Math.max(0.0, reranked.getOrDefault(i.ticketId(), 0.0));
-                    double combined = llmScore == 0.0 ? i.score() : (0.7 * llmScore) + (0.3 * i.score());
+                    double llmScore = clampScore(reranked.getOrDefault(i.ticketId(), 0.0));
+                    double combined = clampScore(llmScore == 0.0 ? i.score() : (0.7 * llmScore) + (0.3 * i.score()));
                     return new SimilarItem(i.ticketId(), i.title(), combined);
                 })
                 .filter(i -> i.score() >= searchProperties.getMinRelevanceScore())
@@ -214,22 +214,26 @@ public class AiService {
     }
 
     private Set<String> extractHintTokens(String text, String category) {
-        String lc = text.toLowerCase(Locale.ROOT);
+        Set<String> queryTokens = normalizedTokens(embeddingService.expandTextForSearch(text));
         Set<String> out = new HashSet<>();
         List<String> domain = searchProperties.getDomainTokens().getOrDefault(category, List.of());
         Set<String> tokens = new HashSet<>(searchProperties.allTokens());
         tokens.addAll(domain);
         for (String token : tokens) {
-            if (lc.contains(token)) out.add(token);
+            Set<String> tokenForms = normalizedTokens(token);
+            if (!tokenForms.isEmpty() && tokenForms.stream().anyMatch(queryTokens::contains)) {
+                out.add(token);
+            }
         }
         return out;
     }
 
     private boolean containsHintToken(Set<String> hints, String candidateText) {
         if (hints == null || hints.isEmpty()) return true;
-        String c = candidateText == null ? "" : candidateText.toLowerCase(Locale.ROOT);
+        Set<String> candidateTokens = normalizedTokens(embeddingService.expandTextForSearch(candidateText));
         for (String h : hints) {
-            if (c.contains(h)) return true;
+            Set<String> hintTokens = normalizedTokens(h);
+            if (!hintTokens.isEmpty() && hintTokens.stream().anyMatch(candidateTokens::contains)) return true;
         }
         return false;
     }
@@ -289,26 +293,47 @@ public class AiService {
     }
 
     public RecommendResponse recommend(String text) {
+        return recommend(text, null, List.of());
+    }
+
+    public RecommendResponse recommend(String text, String mode, List<String> sourceHints) {
         var sim = similar(text);
-        //сборка промпта
-        String ragPrompt = buildRagPrompt(text, sim);
+        String normalizedMode = normalizeRecommendationMode(mode);
+        String ragPrompt = buildRagPrompt(text, sim, normalizedMode, sourceHints == null ? List.of() : sourceHints);
         String llmRecommendation = llmJsonGateway.recommend(ragPrompt);
         String degradedReason = degradedRecommendationReason(llmRecommendation);
-        GroundedRecommendation grounded = buildGroundedRecommendation(text, sim, llmRecommendation);
+        GroundedRecommendation grounded = buildGroundedRecommendation(text, sim, llmRecommendation, normalizedMode);
         return new RecommendResponse(grounded.recommendation(), grounded.steps(),
-                new Explainability(grounded.usedRagSources() ? "RAG_GROUNDED" : (degradedReason == null ? "RAG_PLUS_LLM" : "RAG_PLUS_FALLBACK"),
+                new Explainability(grounded.usedRagSources() ? "RAG_GROUNDED_" + normalizedMode : (degradedReason == null ? "RAG_PLUS_LLM_" + normalizedMode : "RAG_PLUS_FALLBACK_" + normalizedMode),
                         List.of("knowledge_base", "resolved_tickets", "vector_records"),
                         degradedReason == null ? "OK" : "DEGRADED", llmRecommendation, degradedReason));
     }
 
-    private GroundedRecommendation buildGroundedRecommendation(String text, SimilarResponse sim, String llmRecommendation) {
+    public RecommendResponse rewriteRecommendation(String text, String action, String context) {
+        String normalizedAction = normalizeRewriteAction(action);
+        String prompt = buildRewritePrompt(text, normalizedAction, context);
+        String rewritten = llmJsonGateway.recommend(prompt);
+        String degradedReason = degradedRecommendationReason(rewritten);
+        String finalText = degradedReason == null ? sanitizeLlmRecommendation(rewritten) : text;
+        List<String> steps = extractSentences(finalText).stream()
+                .map(this::cleanStep)
+                .filter(step -> !step.isBlank())
+                .limit(3)
+                .toList();
+        return new RecommendResponse(finalText, steps,
+                new Explainability("DRAFT_REWRITE_" + normalizedAction,
+                        List.of("operator_draft", "ticket_context"),
+                        degradedReason == null ? "OK" : "DEGRADED", rewritten, degradedReason));
+    }
+
+    private GroundedRecommendation buildGroundedRecommendation(String text, SimilarResponse sim, String llmRecommendation, String mode) {
         boolean hasArticles = sim.articles() != null && !sim.articles().isEmpty();
         boolean hasCases = sim.resolvedCases() != null && !sim.resolvedCases().isEmpty();
         if (!hasArticles && !hasCases) {
             String fallback = llmRecommendation == null || llmRecommendation.isBlank()
                     ? "По обращению не найдены релевантные статьи базы знаний и решённые инциденты. Передайте заявку оператору для ручного анализа."
                     : llmRecommendation;
-            return new GroundedRecommendation(fallback, List.of(
+            return new GroundedRecommendation(formatModeFallbackRecommendation(fallback, mode), List.of(
                     "Проверить обращение вручную",
                     "Уточнить недостающие данные у автора",
                     "Назначить ответственную группу по классификации обращения"
@@ -316,34 +341,28 @@ public class AiService {
         }
 
         List<String> steps = extractGroundedSteps(sim);
+        List<String> articleLines = sim.articles() == null ? List.of() : sim.articles().stream()
+                .limit(3)
+                .map(article -> article.title() + " — " + article.fitPercent() + "%")
+                .toList();
+        List<String> caseLines = sim.resolvedCases() == null ? List.of() : sim.resolvedCases().stream()
+                .limit(3)
+                .map(c -> "#" + c.ticketId() + " " + c.title() + " — " + c.fitPercent() + "%")
+                .toList();
+        String conciseLlm = sanitizeLlmRecommendation(llmRecommendation);
         StringBuilder sb = new StringBuilder();
-        sb.append("Рекомендация по обращению:\n").append(text).append("\n\n");
-        sb.append("Основание: ");
-        if (hasArticles) {
-            sb.append("статьи базы знаний");
-            if (hasCases) sb.append(" и ");
+        appendModeHeader(sb, mode);
+        sb.append("## Что известно из источников\n");
+        if (!articleLines.isEmpty()) {
+            sb.append("**Статьи базы знаний:**\n");
+            articleLines.forEach(line -> sb.append("- ").append(line).append("\n"));
         }
-        if (hasCases) sb.append("похожие решённые инциденты");
-        sb.append(".\n\n");
-
-        if (hasArticles) {
-            sb.append("Что говорит база знаний:\n");
-            sim.articles().forEach(article -> sb.append("- ").append(article.title()).append(" [")
-                    .append(article.fitPercent()).append("%]: ").append(article.content()).append("\n"));
-            sb.append("\n");
+        if (!caseLines.isEmpty()) {
+            sb.append("**Похожие решённые обращения:**\n");
+            caseLines.forEach(line -> sb.append("- ").append(line).append("\n"));
         }
-        if (hasCases) {
-            sb.append("Что сработало в похожих решённых обращениях:\n");
-            sim.resolvedCases().forEach(c -> sb.append("- #").append(c.ticketId()).append(" ").append(c.title())
-                    .append(" [").append(c.fitPercent()).append("%]: ").append(c.resolutionComment()).append("\n"));
-            sb.append("\n");
-        }
-
-        sb.append("Маршрутизация:\n").append(inferRouting(sim)).append("\n\n");
-        sb.append("Первые действия:\n");
-        for (int i = 0; i < steps.size(); i++) {
-            sb.append(i + 1).append(". ").append(steps.get(i)).append("\n");
-        }
+        sb.append("\n");
+        appendModeBody(sb, mode, steps, conciseLlm, inferRouting(sim));
         return new GroundedRecommendation(sb.toString().trim(), steps, true);
     }
 
@@ -450,14 +469,68 @@ public class AiService {
     }
 
     private double score(String a, String b) {
-        Set<String> sa = new HashSet<>(Arrays.asList(a.toLowerCase(Locale.ROOT).split("\\s+")));
-        Set<String> sb = new HashSet<>(Arrays.asList(b.toLowerCase(Locale.ROOT).split("\\s+")));
-        if (sa.isEmpty()) return 0;
-        long common = sa.stream().filter(sb::contains).count();
-        return common * 1.0 / sa.size();
+        Set<String> query = normalizedTokens(embeddingService.expandTextForSearch(a));
+        Set<String> candidate = normalizedTokens(embeddingService.expandTextForSearch(b));
+        if (query.isEmpty() || candidate.isEmpty()) return 0;
+        double matched = 0;
+        for (String token : query) {
+            if (candidate.contains(token) || candidate.stream().anyMatch(c -> tokenSimilarity(token, c) >= 0.82)) {
+                matched += 1.0;
+            }
+        }
+        return clampScore(matched / query.size());
     }
 
-    private double roundToTwoDecimals(double value) { return Math.round(value * 100.0) / 100.0; }
+    private Set<String> normalizedTokens(String text) {
+        String normalized = (text == null ? "" : text)
+                .toLowerCase(Locale.ROOT)
+                .replace('ё', 'е')
+                .replaceAll("[^\\p{IsAlphabetic}\\p{IsDigit}]+", " ")
+                .trim();
+        if (normalized.isBlank()) return Set.of();
+        return Arrays.stream(normalized.split("\\s+"))
+                .map(this::stemToken)
+                .filter(token -> token.length() >= 2)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private String stemToken(String token) {
+        String t = token == null ? "" : token.toLowerCase(Locale.ROOT).replace('ё', 'е');
+        if (t.length() <= 4) return t;
+        String[] endings = {"иями", "ями", "ами", "ого", "ему", "ыми", "ими", "иях", "ах", "ях", "ов", "ев", "ей", "ом", "ем", "ою", "ею", "ую", "юю", "ая", "яя", "ое", "ее", "ые", "ие", "ый", "ий", "ой", "ам", "ям", "а", "я", "ы", "и", "у", "ю", "е", "о", "ь", "ъ"};
+        for (String ending : endings) {
+            if (t.endsWith(ending) && t.length() - ending.length() >= 3) {
+                return t.substring(0, t.length() - ending.length());
+            }
+        }
+        return t;
+    }
+
+    private double tokenSimilarity(String left, String right) {
+        if (left.length() < 4 || right.length() < 4) return 0.0;
+        Set<String> a = characterNgrams(left, 3);
+        Set<String> b = characterNgrams(right, 3);
+        if (a.isEmpty() || b.isEmpty()) return 0.0;
+        long intersection = a.stream().filter(b::contains).count();
+        long union = java.util.stream.Stream.concat(a.stream(), b.stream()).distinct().count();
+        return union == 0 ? 0.0 : intersection * 1.0 / union;
+    }
+
+    private Set<String> characterNgrams(String token, int size) {
+        if (token.length() < size) return Set.of(token);
+        Set<String> out = new HashSet<>();
+        for (int i = 0; i + size <= token.length(); i++) {
+            out.add(token.substring(i, i + size));
+        }
+        return out;
+    }
+
+    private double clampScore(double score) {
+        if (Double.isNaN(score) || Double.isInfinite(score)) return 0.0;
+        return Math.max(0.0, Math.min(1.0, score));
+    }
+
+    private double roundToTwoDecimals(double value) { return Math.round(Math.max(0.0, Math.min(100.0, value)) * 100.0) / 100.0; }
 
     private ResolvedCaseItem mapResolvedCase(Long id, double vectorScore, String queryText, Map<Long, TaskEntity> tasks) {
         TaskEntity task = tasks.get(id);
@@ -476,28 +549,150 @@ public class AiService {
     }
 
     private double keywordBoost(String queryText, String candidateText) {
-        String q = queryText.toLowerCase(Locale.ROOT);
-        String c = candidateText.toLowerCase(Locale.ROOT);
+        Set<String> queryTokens = normalizedTokens(embeddingService.expandTextForSearch(queryText));
+        Set<String> candidateTokens = normalizedTokens(embeddingService.expandTextForSearch(candidateText));
         double boost = 0.0;
         for (String token : searchProperties.allTokens()) {
-            if (q.contains(token) && c.contains(token)) {
+            Set<String> tokenForms = normalizedTokens(token);
+            if (!tokenForms.isEmpty() && tokenForms.stream().anyMatch(queryTokens::contains) && tokenForms.stream().anyMatch(candidateTokens::contains)) {
                 boost += searchProperties.getTokenBoostStep();
             }
         }
         return Math.min(boost, searchProperties.getTokenBoostCap());
     }
 
-    private String buildRagPrompt(String text, SimilarResponse sim) {
+    private String normalizeRewriteAction(String action) {
+        if (action == null || action.isBlank()) return "POLITE";
+        String value = action.trim().toUpperCase(Locale.ROOT);
+        return switch (value) {
+            case "SHORTEN", "POLITE", "TECHNICAL_DETAIL" -> value;
+            default -> "POLITE";
+        };
+    }
+
+    private String buildRewritePrompt(String text, String action, String context) {
+        String instruction = switch (normalizeRewriteAction(action)) {
+            case "SHORTEN" -> "Сократи черновик: оставь только суть, убери повторы, сохрани факты и важные шаги.";
+            case "TECHNICAL_DETAIL" -> "Сделай черновик технически подробнее: добавь проверяемые действия, условия и ожидаемый результат, не выдумывай факты.";
+            default -> "Сделай черновик более вежливым и понятным, сохрани смысл и факты, не добавляй лишних обещаний.";
+        };
+        return """
+                Ты редактор ответа службы поддержки.
+                Верни только итоговый текст без JSON, без markdown-забора и без пояснений о редактировании.
+                %s
+
+                Контекст обращения:
+                %s
+
+                Черновик:
+                %s
+                """.formatted(instruction, context == null ? "—" : context, text);
+    }
+
+    private String buildRagPrompt(String text, SimilarResponse sim, String mode, List<String> sourceHints) {
         StringBuilder sb = new StringBuilder();
-        sb.append("Ты помощник техподдержки. Сформируй краткую рекомендацию по обращению: ").append(text).append("\n\n");
-        sb.append("Правило: сначала используй факты из релевантных статей базы знаний и решений похожих закрытых обращений. ")
-                .append("Не заменяй их общими советами, если источники найдены. Если источники противоречат общим правилам, приоритет у источников.\n\n");
+        sb.append("Ты помощник техподдержки. Сформируй ответ в режиме: ").append(recommendationModeTitle(mode)).append(".\n");
+        sb.append("Пиши по-русски, коротко, без markdown-звёздочек вокруг заголовков, без повторов и без общих фраз. ")
+                .append("Опирайся сначала на источники, затем на общий опыт поддержки.\n\n");
+        sb.append("Обращение:\n").append(text).append("\n\n");
+        if (sourceHints != null && !sourceHints.isEmpty()) {
+            sb.append("Выбранные оператором источники с повышенным приоритетом:\n");
+            sourceHints.forEach(hint -> sb.append("- ").append(hint).append("\n"));
+            sb.append("\n");
+        }
         sb.append("Похожие решенные кейсы:\n");
         sim.resolvedCases().forEach(c -> sb.append("- ").append(c.title()).append(" [").append(c.fitPercent()).append("%]: ").append(c.resolutionComment()).append("\n"));
         sb.append("\nРелевантные статьи БЗ:\n");
         sim.articles().forEach(a -> sb.append("- ").append(a.title()).append(" [").append(a.fitPercent()).append("%, ").append(a.category()).append("]: ").append(a.content()).append("\n"));
-        sb.append("\nВерни: краткую рекомендацию, маршрутизацию и первые 3 действия строго на основе этих источников. ")
-                .append("Если источников нет, явно напиши, что требуется ручная обработка оператором.");
+        sb.append("\nВерни только полезный текст для выбранного режима. Если источников нет, явно напиши, что требуется ручная обработка оператором.");
         return sb.toString();
     }
+
+    private String normalizeRecommendationMode(String mode) {
+        if (mode == null || mode.isBlank()) return "STEP_BY_STEP";
+        String value = mode.trim().toUpperCase(Locale.ROOT);
+        return switch (value) {
+            case "SHORT", "STEP_BY_STEP", "USER_REPLY", "INTERNAL_COMMENT", "TECHNICAL_GUIDE", "ESCALATION_SUMMARY" -> value;
+            default -> "STEP_BY_STEP";
+        };
+    }
+
+    private String recommendationModeTitle(String mode) {
+        return switch (normalizeRecommendationMode(mode)) {
+            case "SHORT" -> "краткая рекомендация";
+            case "USER_REPLY" -> "ответ пользователю";
+            case "INTERNAL_COMMENT" -> "внутренний комментарий оператору";
+            case "TECHNICAL_GUIDE" -> "техническая инструкция";
+            case "ESCALATION_SUMMARY" -> "резюме для эскалации";
+            default -> "пошаговое решение";
+        };
+    }
+
+    private void appendModeHeader(StringBuilder sb, String mode) {
+        sb.append("# ").append(recommendationModeTitle(mode)).append("\n\n");
+    }
+
+    private void appendModeBody(StringBuilder sb, String mode, List<String> steps, String llmRecommendation, String routing) {
+        String normalized = normalizeRecommendationMode(mode);
+        if ("SHORT".equals(normalized)) {
+            sb.append("## Рекомендация\n").append(llmRecommendation).append("\n\n");
+            sb.append("## Первые действия\n");
+            steps.stream().limit(2).forEach(step -> sb.append("- ").append(step).append("\n"));
+            return;
+        }
+        if ("USER_REPLY".equals(normalized)) {
+            sb.append("## Готовый ответ пользователю\n").append(llmRecommendation).append("\n\n");
+            sb.append("## Что проверить оператору перед отправкой\n");
+            steps.stream().limit(3).forEach(step -> sb.append("- ").append(step).append("\n"));
+            return;
+        }
+        if ("INTERNAL_COMMENT".equals(normalized)) {
+            sb.append("## Внутренний комментарий\n").append(llmRecommendation).append("\n\n");
+            sb.append("## Следующие действия оператора\n");
+            steps.stream().limit(3).forEach(step -> sb.append("- ").append(step).append("\n"));
+            return;
+        }
+        if ("TECHNICAL_GUIDE".equals(normalized)) {
+            sb.append("## Техническая инструкция\n");
+            for (int i = 0; i < steps.size(); i++) {
+                sb.append(i + 1).append(". ").append(steps.get(i)).append("\n");
+            }
+            sb.append("\n## Маршрутизация\n").append(routing).append("\n");
+            return;
+        }
+        if ("ESCALATION_SUMMARY".equals(normalized)) {
+            sb.append("## Резюме для эскалации\n").append(llmRecommendation).append("\n\n");
+            sb.append("## Что уже можно проверить\n");
+            steps.stream().limit(3).forEach(step -> sb.append("- ").append(step).append("\n"));
+            sb.append("\n## Предлагаемая маршрутизация\n").append(routing).append("\n");
+            return;
+        }
+        sb.append("## Пошаговое решение\n");
+        for (int i = 0; i < steps.size(); i++) {
+            sb.append(i + 1).append(". ").append(steps.get(i)).append("\n");
+        }
+        sb.append("\n## Комментарий ИИ\n").append(llmRecommendation).append("\n");
+        sb.append("\n## Маршрутизация\n").append(routing).append("\n");
+    }
+
+    private String sanitizeLlmRecommendation(String raw) {
+        if (raw == null || raw.isBlank() || degradedRecommendationReason(raw) != null) {
+            return "Используйте найденные источники как основу решения и проверьте детали обращения перед ответом пользователю.";
+        }
+        String cleaned = raw.replace("\r", "")
+                .replaceAll("(?m)^#{1,6}\\s*", "")
+                .replaceAll("\\*\\*(.*?)\\*\\*", "$1")
+                .replaceAll("(?m)^\\s*[-*]\\s+", "- ")
+                .replaceAll("\n{3,}", "\n\n")
+                .trim();
+        if (cleaned.length() > 1200) {
+            return cleaned.substring(0, 1200).trim() + "…";
+        }
+        return cleaned;
+    }
+
+    private String formatModeFallbackRecommendation(String fallback, String mode) {
+        return "# " + recommendationModeTitle(mode) + "\n\n## Рекомендация\n" + fallback;
+    }
+
 }

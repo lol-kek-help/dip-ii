@@ -1,28 +1,78 @@
-import { Alert, Button, Card, Col, Descriptions, Divider, Form, Input, List, Modal, Rate, Row, Select, Space, Switch, Tabs, Tag, Timeline, Typography, message } from 'antd';
+import { Alert, Badge, Button, Card, Checkbox, Col, Collapse, Descriptions, Divider, Drawer, Empty, Form, Input, List, Modal, Progress, Radio, Rate, Row, Select, Space, Switch, Tabs, Tag, Timeline, Typography, message } from 'antd';
+import { CheckCircleOutlined, HistoryOutlined, RobotOutlined, SafetyOutlined } from '@ant-design/icons';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { aiApi } from '../api/aiApi';
 import { categoryLabel, priorityColor, priorityLabel, statusColor, statusLabel } from '../utils/formatters';
 import { ticketApi } from '../api/ticketApi';
 import { useAuthStore } from '../store/authStore';
-import { Category, ClassifyResponse, Priority, RecommendResponse, SavedAiRecommendation, SimilarResponse, Ticket, TicketComment, TicketStatusHistory } from '../types/models';
+import { Category, ClassifyResponse, Explainability, Priority, RecommendResponse, RecommendationMode, SavedAiRecommendation, SimilarResponse, Ticket, TicketComment, TicketStatusHistory } from '../types/models';
+
+const recommendationModes: { value: RecommendationMode; label: string; description: string }[] = [
+  { value: 'SHORT', label: 'Краткая рекомендация', description: 'Сжатый вывод и 1–2 первых действия.' },
+  { value: 'STEP_BY_STEP', label: 'Пошаговое решение', description: 'Последовательный план для оператора.' },
+  { value: 'USER_REPLY', label: 'Ответ пользователю', description: 'Готовый текст в понятном пользователю стиле.' },
+  { value: 'INTERNAL_COMMENT', label: 'Внутренний комментарий', description: 'Служебная заметка без лишних объяснений.' },
+  { value: 'TECHNICAL_GUIDE', label: 'Техническая инструкция', description: 'Проверки и действия для технического специалиста.' },
+  { value: 'ESCALATION_SUMMARY', label: 'Резюме для эскалации', description: 'Короткое описание для передачи другой группе.' }
+];
 
 function prettyAiText(raw?: string) {
   if (!raw) return '';
-  return raw.replace(/\r/g, '').replace(/---/g, '\n').replace(/#{3,4}\s*/g, '\n').replace(/\*\*(.*?)\*\*/g, '$1').replace(/^\s*[-*]\s+/gm, '• ').replace(/\n{3,}/g, '\n\n').trim();
+  return raw.replace(/\r/g, '').replace(/---/g, '\n').replace(/\*\*(.*?)\*\*/g, '$1').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function ExplainabilityBlock({ explainability }: { explainability?: { mode?: string; sources?: string[]; llmStatus?: string; rawModelOutput?: string | null; fallbackReason?: string | null } }) {
+
+function clampPercent(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function renderFormattedAiText(raw?: string) {
+  const text = prettyAiText(raw);
+  if (!text) return <Empty description='Черновик пока не сгенерирован' />;
+  const blocks = text.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+  return <Space direction='vertical' size={12} style={{ width: '100%' }}>
+    {blocks.map((block, index) => {
+      const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
+      const first = lines[0] ?? '';
+      const heading = first.replace(/^#{1,6}\s*/, '');
+      if (/^#{1,6}\s+/.test(first)) {
+        const rest = lines.slice(1);
+        return <Card key={index} size='small' className='ai-output-section' title={heading}>
+          {rest.length ? renderFormattedAiText(rest.join('\n')) : null}
+        </Card>;
+      }
+      if (lines.every((line) => /^[-•]\s+/.test(line))) {
+        return <ul key={index} className='ai-output-list'>{lines.map((line, itemIndex) => <li key={itemIndex}>{line.replace(/^[-•]\s+/, '')}</li>)}</ul>;
+      }
+      if (lines.every((line) => /^\d+[.)]\s+/.test(line))) {
+        return <ol key={index} className='ai-output-list'>{lines.map((line, itemIndex) => <li key={itemIndex}>{line.replace(/^\d+[.)]\s+/, '')}</li>)}</ol>;
+      }
+      return <Typography.Paragraph key={index} className='ai-output-paragraph'>{block.replace(/^[-•]\s+/, '')}</Typography.Paragraph>;
+    })}
+  </Space>;
+}
+
+function ExplainabilityBlock({ explainability }: { explainability?: Partial<Explainability> }) {
   if (!explainability) return null;
-  return <Alert style={{ marginTop: 12 }} type='info' showIcon message={`Режим: ${explainability.mode ?? '—'}, LLM: ${explainability.llmStatus ?? '—'}`} description={<>
-    <div>Источники: {(explainability.sources ?? []).join(', ') || '—'}</div>
-    {explainability.fallbackReason && <Alert style={{ marginTop: 8, marginBottom: 8 }} type='warning' showIcon message={explainability.fallbackReason} />}
-    {explainability.rawModelOutput && <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }} ellipsis={{ rows: 4, expandable: true }}>Raw: {explainability.rawModelOutput}</Typography.Paragraph>}
-  </>} />;
+  const llmOk = explainability.llmStatus === 'OK';
+  return <Collapse ghost size='small' style={{ marginTop: 8 }} items={[{
+    key: 'explainability',
+    label: <Space><SafetyOutlined />Технические детали AI <Tag color={llmOk ? 'green' : 'orange'}>{explainability.llmStatus ?? '—'}</Tag></Space>,
+    children: <Space direction='vertical' size={8} style={{ width: '100%' }}>
+      <div><Typography.Text strong>Режим:</Typography.Text> {explainability.mode ?? '—'}</div>
+      <div><Typography.Text strong>Источники:</Typography.Text> {(explainability.sources ?? []).join(', ') || '—'}</div>
+      {explainability.fallbackReason && <Alert type='warning' showIcon message={explainability.fallbackReason} />}
+      {explainability.rawModelOutput && <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }} ellipsis={{ rows: 6, expandable: true }}>Raw: {explainability.rawModelOutput}</Typography.Paragraph>}
+    </Space>
+  }]} />;
 }
 
 interface CommentFormValues { commentText: string; internalComment?: boolean; }
 interface FeedbackFormValues { accepted: boolean; usefulnessScore?: number; feedbackComment?: string; }
+
+type SourceItem = { key: string; type: 'article' | 'case' | 'ticket'; title: string; fit: number; description: string; meta: string; color: string };
 
 export function TicketDetailsPage() {
   const { id } = useParams();
@@ -34,9 +84,13 @@ export function TicketDetailsPage() {
   const [history, setHistory] = useState<TicketStatusHistory[]>([]);
   const [classify, setClassify] = useState<ClassifyResponse>();
   const [similar, setSimilar] = useState<SimilarResponse>();
-  const [recommend, setRecommend] = useState<RecommendResponse>();
+  const [draft, setDraft] = useState<RecommendResponse>();
+  const [draftText, setDraftText] = useState('');
+  const [selectedMode, setSelectedMode] = useState<RecommendationMode>('STEP_BY_STEP');
+  const [selectedSourceKeys, setSelectedSourceKeys] = useState<string[]>([]);
   const [savedRecommendations, setSavedRecommendations] = useState<SavedAiRecommendation[]>([]);
   const [aiLoading, setAiLoading] = useState<string>();
+  const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
   const [escalateOpen, setEscalateOpen] = useState(false);
   const [aiForm] = Form.useForm();
@@ -47,6 +101,50 @@ export function TicketDetailsPage() {
   const text = useMemo(() => `${ticket?.title ?? ''}\n${ticket?.description ?? ''}`.trim(), [ticket]);
   const lastComment = comments[0];
   const lastHistory = history[0];
+
+  const sourceItems = useMemo<SourceItem[]>(() => {
+    const articles = (similar?.articles ?? []).map((article) => ({
+      key: `article-${article.articleId}`,
+      type: 'article' as const,
+      title: article.title,
+      fit: clampPercent(article.fitPercent),
+      description: article.content,
+      meta: `Статья БЗ · ${article.category}`,
+      color: 'blue'
+    }));
+    const cases = (similar?.resolvedCases ?? []).map((item) => ({
+      key: `case-${item.ticketId}`,
+      type: 'case' as const,
+      title: `#${item.ticketId} ${item.title}`,
+      fit: clampPercent(item.fitPercent),
+      description: item.resolutionComment || 'Решение не заполнено',
+      meta: 'Решённое обращение',
+      color: 'green'
+    }));
+    const tickets = (similar?.tickets ?? []).map((item) => ({
+      key: `ticket-${item.ticketId}`,
+      type: 'ticket' as const,
+      title: `#${item.ticketId} ${item.title}`,
+      fit: clampPercent(item.score * 100),
+      description: 'Похожее обращение без готового решения. Используйте как сигнал для сравнения симптомов.',
+      meta: 'Похожее обращение',
+      color: 'purple'
+    }));
+    return [...articles, ...cases, ...tickets].sort((a, b) => b.fit - a.fit);
+  }, [similar]);
+
+  const selectedSourceHints = useMemo(() => sourceItems
+    .filter((source) => selectedSourceKeys.includes(source.key))
+    .map((source) => `${source.meta}: ${source.title} (${source.fit}%). ${source.description}`), [sourceItems, selectedSourceKeys]);
+
+  const sourceQuality = useMemo(() => {
+    const selected = sourceItems.filter((source) => selectedSourceKeys.includes(source.key));
+    const best = selected.reduce((max, item) => Math.max(max, item.fit), 0);
+    const score = Math.min(100, Math.round((selected.length ? 35 : 0) + Math.min(best, 100) * 0.45 + Math.min(selected.length, 4) * 5));
+    const status = score >= 75 ? 'good' : score >= 45 ? 'normal' : 'weak';
+    return { selected, best, score, status };
+  }, [sourceItems, selectedSourceKeys]);
+
   const load = async () => {
     const [ticketData, commentsData, historyData, recommendationsData] = await Promise.all([
       ticketApi.getById(ticketId), ticketApi.comments(ticketId), ticketApi.statusHistory(ticketId),
@@ -57,6 +155,13 @@ export function TicketDetailsPage() {
   };
 
   useEffect(() => { if (ticketId) load(); }, [ticketId]);
+
+  useEffect(() => {
+    if (sourceItems.length && !selectedSourceKeys.length) {
+      setSelectedSourceKeys(sourceItems.filter((source) => source.fit >= 50).map((source) => source.key));
+    }
+  }, [sourceItems, selectedSourceKeys.length]);
+
   if (!ticket) return <Card loading />;
 
   const runClassification = async () => {
@@ -73,7 +178,79 @@ export function TicketDetailsPage() {
   const loadSources = async () => {
     setAiLoading('sources');
     try {
-      setSimilar(await aiApi.similar(text));
+      const result = await aiApi.similar(text);
+      setSimilar(result);
+      const nextItems = [
+        ...(result.articles ?? []).map((article) => ({ key: `article-${article.articleId}`, fit: clampPercent(article.fitPercent) })),
+        ...(result.resolvedCases ?? []).map((item) => ({ key: `case-${item.ticketId}`, fit: clampPercent(item.fitPercent) })),
+        ...(result.tickets ?? []).map((item) => ({ key: `ticket-${item.ticketId}`, fit: clampPercent(item.score * 100) }))
+      ];
+      setSelectedSourceKeys(nextItems.filter((source) => source.fit >= 50).map((source) => source.key));
+      message.success('Источники подобраны. Проверьте их перед генерацией черновика.');
+    } finally {
+      setAiLoading(undefined);
+    }
+  };
+
+  const generateDraft = async () => {
+    setAiLoading('recommend');
+    try {
+      if (!similar) {
+        await loadSources();
+      }
+      const result = await aiApi.recommend(text, selectedMode, selectedSourceHints);
+      setDraft(result);
+      setDraftText(result.recommendation);
+      message.success('Черновик готов. Его можно отредактировать перед сохранением.');
+    } finally {
+      setAiLoading(undefined);
+    }
+  };
+
+  const saveDraft = async () => {
+    if (!draft || !draftText.trim()) return;
+    setAiLoading('saveDraft');
+    try {
+      const saved = await ticketApi.saveAiRecommendationDraft(ticketId, {
+        recommendation: draftText.trim(),
+        steps: draft.steps ?? [],
+        mode: draft.explainability?.mode ?? selectedMode,
+        sources: sourceQuality.selected.length ? sourceQuality.selected.map((source) => `${source.meta}: ${source.title}`) : (draft.explainability?.sources ?? []),
+        llmStatus: draft.explainability?.llmStatus,
+        rawModelOutput: draft.explainability?.rawModelOutput
+      });
+      setSavedRecommendations([saved, ...savedRecommendations]);
+      message.success('Черновик сохранён в историю рекомендаций.');
+    } finally {
+      setAiLoading(undefined);
+    }
+  };
+
+
+  const rewriteDraft = async (action: 'SHORTEN'|'POLITE'|'TECHNICAL_DETAIL') => {
+    if (!draftText.trim()) return;
+    setAiLoading(`rewrite-${action}`);
+    try {
+      const result = await aiApi.rewriteRecommendation(draftText.trim(), action, text);
+      setDraft({
+        recommendation: result.recommendation,
+        steps: result.steps?.length ? result.steps : (draft?.steps ?? []),
+        explainability: result.explainability
+      });
+      setDraftText(result.recommendation);
+      message.success('Черновик обновлён. Проверьте текст перед сохранением.');
+    } finally {
+      setAiLoading(undefined);
+    }
+  };
+
+  const insertDraftAsInternalComment = async () => {
+    if (!draftText.trim()) return;
+    setAiLoading('commentDraft');
+    try {
+      await ticketApi.addComment(ticketId, { commentText: draftText.trim(), internalComment: true });
+      setComments(await ticketApi.comments(ticketId));
+      message.success('Черновик добавлен как внутренний комментарий.');
     } finally {
       setAiLoading(undefined);
     }
@@ -92,29 +269,6 @@ export function TicketDetailsPage() {
     setComments(await ticketApi.comments(ticketId));
   };
 
-  const saveAiRecommendation = async () => {
-    setAiLoading('recommend');
-    try {
-      const saved = await ticketApi.saveAiRecommendation(ticketId);
-      setSavedRecommendations([saved, ...savedRecommendations]);
-      setRecommend({
-        recommendation: saved.recommendation,
-        steps: saved.steps,
-        explainability: {
-          mode: saved.mode ?? 'RAG_GROUNDED',
-          sources: saved.sources ?? [],
-          llmStatus: saved.llmStatus ?? 'OK',
-          rawModelOutput: saved.rawModelOutput,
-          fallbackReason: saved.fallbackReason
-        }
-      });
-      setSimilar(await aiApi.similar(text));
-      message.success('RAG-рекомендация сгенерирована по базе знаний/похожим случаям и сохранена.');
-    } finally {
-      setAiLoading(undefined);
-    }
-  };
-
   const setInProgress = async () => setTicket(await ticketApi.changeStatus(ticketId, 'IN_PROGRESS', 'Взято в работу'));
 
   const submitEscalation = async (values: { reason: string }) => {
@@ -129,159 +283,170 @@ export function TicketDetailsPage() {
     setCloseOpen(false);
   };
 
-  const renderSources = () => <Row gutter={[16, 16]}>
-    <Col xs={24} lg={8}>
-      <Card size='small' title='Похожие обращения' style={{ height: '100%' }}>
-        <List size='small' dataSource={similar?.tickets ?? []} locale={{ emptyText: 'Пока не загружено' }} renderItem={(item) =>
-          <List.Item>#{item.ticketId} {item.title} <Tag>{Math.round(item.score * 100)}%</Tag></List.Item>
-        } />
-      </Card>
-    </Col>
-    <Col xs={24} lg={8}>
-      <Card size='small' title='Решённые инциденты' style={{ height: '100%' }}>
-        <List size='small' dataSource={similar?.resolvedCases ?? []} locale={{ emptyText: 'Релевантные кейсы не найдены' }} renderItem={(item) =>
-          <List.Item>
-            <Space direction='vertical' size={2} style={{ width: '100%' }}>
-              <Typography.Text strong>#{item.ticketId} {item.title} <Tag color='green'>{item.fitPercent}%</Tag></Typography.Text>
-              <Typography.Text>{item.resolutionComment || 'Решение не заполнено'}</Typography.Text>
-            </Space>
-          </List.Item>
-        } />
-      </Card>
-    </Col>
-    <Col xs={24} lg={8}>
-      <Card size='small' title='Статьи базы знаний' style={{ height: '100%' }}>
-        <List size='small' dataSource={similar?.articles ?? []} locale={{ emptyText: 'Релевантные статьи не найдены' }} renderItem={(article) =>
-          <List.Item>
-            <Space direction='vertical' size={2} style={{ width: '100%' }}>
-              <Typography.Text strong>{article.title} <Tag color='blue'>{article.fitPercent}%</Tag></Typography.Text>
-              <Typography.Paragraph style={{ marginBottom: 0 }} ellipsis={{ rows: 3, expandable: true }}>{article.content}</Typography.Paragraph>
-            </Space>
-          </List.Item>
-        } />
-      </Card>
-    </Col>
-  </Row>;
+  const renderSourceCard = (source: SourceItem) => <Card key={source.key} size='small' className='ai-source-card'>
+    <Space align='start' style={{ width: '100%', justifyContent: 'space-between' }}>
+      <Checkbox checked={selectedSourceKeys.includes(source.key)} onChange={(event) => {
+        setSelectedSourceKeys(event.target.checked ? [...selectedSourceKeys, source.key] : selectedSourceKeys.filter((key) => key !== source.key));
+      }}>
+        <Space direction='vertical' size={2}>
+          <Typography.Text strong>{source.title}</Typography.Text>
+          <Typography.Text type='secondary'>{source.meta}</Typography.Text>
+        </Space>
+      </Checkbox>
+      <Tag color={source.color}>{source.fit}%</Tag>
+    </Space>
+    <Typography.Paragraph style={{ marginTop: 8, marginBottom: 0 }} ellipsis={{ rows: 3, expandable: true }}>{source.description}</Typography.Paragraph>
+  </Card>;
+
+  const sourceQualityType = sourceQuality.status === 'good' ? 'success' : sourceQuality.status === 'normal' ? 'normal' : 'exception';
+  const sourceQualityMessage = sourceQuality.status === 'good'
+    ? 'Источников достаточно: можно генерировать уверенный черновик.'
+    : sourceQuality.status === 'normal'
+      ? 'Источники есть, но проверьте релевантность перед сохранением.'
+      : 'Источников мало или они не выбраны. Черновик может быть общим.';
+
+  const classificationCard = <Card size='small' title='AI-классификация' extra={canOperate && <Button onClick={runClassification} loading={aiLoading === 'classify'}>Проверить классификацию AI</Button>}>
+    {classify ? <Space direction='vertical' size={12} style={{ width: '100%' }}>
+      <Alert showIcon type='info' message='AI предлагает классификацию, но изменения применяются только после подтверждения оператора.' />
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={8}><Tag>{categoryLabel[classify.category] ?? classify.category}</Tag></Col>
+        <Col xs={24} md={8}><Tag color={priorityColor[classify.priority]}>{priorityLabel[classify.priority] ?? classify.priority}</Tag></Col>
+        <Col xs={24} md={8}><Typography.Text>{classify.rationale}</Typography.Text></Col>
+      </Row>
+      <Form form={aiForm} onFinish={applyAi} layout='inline'>
+        <Form.Item name='category' label='Категория'><Select style={{ width: 160 }} allowClear options={['GENERAL','INCIDENT','ACCESS','BILLING'].map((value) => ({ value, label: categoryLabel[value as keyof typeof categoryLabel] }))} /></Form.Item>
+        <Form.Item name='priority' label='Приоритет'><Select style={{ width: 160 }} allowClear options={['LOW','MEDIUM','HIGH','URGENT'].map((value) => ({ value, label: priorityLabel[value as keyof typeof priorityLabel] }))} /></Form.Item>
+        <Button htmlType='submit' type='primary'>Принять классификацию</Button>
+      </Form>
+      <ExplainabilityBlock explainability={classify.explainability} />
+    </Space> : <Typography.Text type='secondary'>Классификация отделена от AI-помощника решения. Нажмите кнопку, чтобы получить предложение категории и приоритета.</Typography.Text>}
+  </Card>;
 
   const overview = <Row gutter={[16, 16]} align='top'>
     <Col xs={24} xl={16}>
-      <Card title='Детали обращения'>
-        <Descriptions column={{ xs: 1, md: 2 }}>
-          <Descriptions.Item label='Тема'>{ticket.title}</Descriptions.Item>
-          <Descriptions.Item label='Статус'><Tag color={statusColor[ticket.status]}>{statusLabel[ticket.status] ?? ticket.status}</Tag></Descriptions.Item>
-          <Descriptions.Item label='Категория'>{ticket.category ? (categoryLabel[ticket.category] ?? ticket.category) : '—'}</Descriptions.Item>
-          <Descriptions.Item label='Приоритет'>{ticket.priority ? <Tag color={priorityColor[ticket.priority]}>{priorityLabel[ticket.priority] ?? ticket.priority}</Tag> : '—'}</Descriptions.Item>
-          <Descriptions.Item label='Автор'>{ticket.requester?.name || ticket.requester?.username || '—'}</Descriptions.Item>
-          <Descriptions.Item label='Исполнитель'>{ticket.assignedTo?.name || ticket.assignedTo?.username || 'Не назначен'}</Descriptions.Item>
-          <Descriptions.Item label='Срок'>{ticket.resolutionDeadline ?? '—'}</Descriptions.Item>
-          <Descriptions.Item label='Описание' span={2}><Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>{ticket.description}</Typography.Paragraph></Descriptions.Item>
-          <Descriptions.Item label='Решение' span={2}>{ticket.resolutionComment || '—'}</Descriptions.Item>
-        </Descriptions>
-      </Card>
+      <Space direction='vertical' size={16} style={{ width: '100%' }}>
+        <Card title='Детали обращения'>
+          <Descriptions column={{ xs: 1, md: 2 }}>
+            <Descriptions.Item label='Тема'>{ticket.title}</Descriptions.Item>
+            <Descriptions.Item label='Статус'><Tag color={statusColor[ticket.status]}>{statusLabel[ticket.status] ?? ticket.status}</Tag></Descriptions.Item>
+            <Descriptions.Item label='Категория'>{ticket.category ? (categoryLabel[ticket.category] ?? ticket.category) : '—'}</Descriptions.Item>
+            <Descriptions.Item label='Приоритет'>{ticket.priority ? <Tag color={priorityColor[ticket.priority]}>{priorityLabel[ticket.priority] ?? ticket.priority}</Tag> : '—'}</Descriptions.Item>
+            <Descriptions.Item label='Автор'>{ticket.requester?.name || ticket.requester?.username || '—'}</Descriptions.Item>
+            <Descriptions.Item label='Исполнитель'>{ticket.assignedTo?.name || ticket.assignedTo?.username || 'Не назначен'}</Descriptions.Item>
+            <Descriptions.Item label='Срок'>{ticket.resolutionDeadline ?? '—'}</Descriptions.Item>
+            <Descriptions.Item label='Описание' span={2}><Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>{ticket.description}</Typography.Paragraph></Descriptions.Item>
+            <Descriptions.Item label='Решение' span={2}>{ticket.resolutionComment || '—'}</Descriptions.Item>
+          </Descriptions>
+        </Card>
+        {classificationCard}
+      </Space>
     </Col>
     <Col xs={24} xl={8}>
       <Space direction='vertical' size={16} style={{ width: '100%' }}>
         <Card title={`Комментарии: ${comments.length}`}>
           {lastComment ? <List.Item>
-            <List.Item.Meta title={<Space>{lastComment.author.name || lastComment.author.username}{lastComment.internalComment && <Tag color='orange'>Внутренний</Tag>}</Space>} description={<><Typography.Paragraph ellipsis={{ rows: 3, expandable: true }}>{lastComment.commentText}</Typography.Paragraph><Typography.Text type='secondary'>{lastComment.createdAt}</Typography.Text></>} />
+            <List.Item.Meta title={<Space>{lastComment.author.name || lastComment.author.username}{lastComment.internalComment && <Tag color='orange'>Внутренний</Tag>}</Space>} description={<Typography.Paragraph ellipsis={{ rows: 3, expandable: true }}>{lastComment.commentText}</Typography.Paragraph>} />
           </List.Item> : <Typography.Text type='secondary'>Комментариев пока нет</Typography.Text>}
         </Card>
-        <Card title={`События истории: ${history.length}`}>
-          {lastHistory ? <Timeline items={[{ children: <><b>{lastHistory.fromStatus ?? '—'} → {lastHistory.toStatus}</b><div>{lastHistory.reason || 'Без комментария'}</div><Typography.Text type='secondary'>{lastHistory.createdAt} · {lastHistory.changedBy?.username ?? 'система'}</Typography.Text></> }]} /> : <Typography.Text type='secondary'>Истории пока нет</Typography.Text>}
+        <Card title='Последнее изменение статуса'>
+          {lastHistory ? <Timeline items={[{ children: <><Tag color={statusColor[lastHistory.toStatus]}>{statusLabel[lastHistory.toStatus] ?? lastHistory.toStatus}</Tag><div>{lastHistory.reason || 'Без комментария'}</div><Typography.Text type='secondary'>{lastHistory.createdAt}</Typography.Text></> }]} /> : <Typography.Text type='secondary'>История пока не заполнена</Typography.Text>}
         </Card>
       </Space>
     </Col>
   </Row>;
 
   const commentsTab = <Card title='Комментарии'>
-    <Form form={commentForm} layout='vertical' onFinish={addComment}>
-      <Form.Item name='commentText' label='Новый комментарий' rules={[{ required: true, message: 'Введите комментарий' }]}><Input.TextArea rows={3} /></Form.Item>
-      {canOperate && <Form.Item name='internalComment' label='Внутренний комментарий' valuePropName='checked'><Switch /></Form.Item>}
-      <Button htmlType='submit' type='primary'>Добавить комментарий</Button>
-    </Form>
-    <Divider />
-    <div className='scrollable-panel'>
-      <List dataSource={comments} locale={{ emptyText: 'Комментариев пока нет' }} renderItem={(comment) => <List.Item>
-        <List.Item.Meta title={<Space>{comment.author.name || comment.author.username}{comment.internalComment && <Tag color='orange'>Внутренний</Tag>}</Space>} description={<><div style={{ whiteSpace: 'pre-wrap' }}>{comment.commentText}</div><Typography.Text type='secondary'>{comment.createdAt}</Typography.Text></>} />
-      </List.Item>} />
-    </div>
+    <Row gutter={[16, 16]}>
+      <Col xs={24} lg={14}><List dataSource={comments} locale={{ emptyText: 'Комментариев пока нет' }} renderItem={(item) => <List.Item>
+        <List.Item.Meta title={<Space>{item.author.name || item.author.username}{item.internalComment && <Tag color='orange'>Внутренний</Tag>}</Space>} description={<><Typography.Paragraph style={{ whiteSpace: 'pre-wrap' }}>{item.commentText}</Typography.Paragraph><Typography.Text type='secondary'>{item.createdAt}</Typography.Text></>} />
+      </List.Item>} /></Col>
+      <Col xs={24} lg={10}>{canOperate || role === 'USER' ? <Form form={commentForm} layout='vertical' onFinish={addComment}>
+        <Form.Item name='commentText' label='Новый комментарий' rules={[{ required: true, message: 'Введите комментарий' }]}><Input.TextArea rows={5} /></Form.Item>
+        {canOperate && <Form.Item name='internalComment' valuePropName='checked'><Switch /> Внутренний комментарий</Form.Item>}
+        <Button htmlType='submit' type='primary'>Добавить</Button>
+      </Form> : <Alert type='info' showIcon message='Добавление комментариев недоступно.' />}</Col>
+    </Row>
   </Card>;
 
   const historyTab = <Card title='История статусов'>
-    <Timeline items={history.map((h) => ({ children: <><b>{h.fromStatus ?? '—'} → {h.toStatus}</b><div>{h.reason || 'Без комментария'}</div><Typography.Text type='secondary'>{h.createdAt} · {h.changedBy?.username ?? 'система'}</Typography.Text></> }))} />
+    <Timeline items={history.map((item) => ({ children: <><Tag color={statusColor[item.toStatus]}>{statusLabel[item.toStatus] ?? item.toStatus}</Tag><div>{item.reason || 'Без комментария'}</div><Typography.Text type='secondary'>{item.createdAt} · {item.changedBy?.name || item.changedBy?.username || 'Система'}</Typography.Text></> }))} />
   </Card>;
 
-  const aiTab = <Card title='ИИ-помощник' extra={<Tag color='purple'>RAG: база знаний + решённые инциденты</Tag>}>
-    {!canOperate && <Alert type='info' showIcon message='ИИ-помощник доступен оператору и администратору.' />}
-    {canOperate && <Space direction='vertical' size={16} style={{ width: '100%' }}>
-      <Alert showIcon type='info' message='Рекомендация строится в первую очередь по релевантным статьям базы знаний и похожим решённым обращениям. LLM используется только как слой формулировки и не должен подменять найденные источники.' />
-      <Space wrap>
-        <Button onClick={runClassification} loading={aiLoading === 'classify'}>Получить классификацию</Button>
-        <Button onClick={loadSources} loading={aiLoading === 'sources'}>Обновить источники RAG</Button>
-        <Button type='primary' onClick={saveAiRecommendation} loading={aiLoading === 'recommend'}>Сгенерировать и сохранить рекомендацию</Button>
-      </Space>
-      {classify && <Card size='small' title='Предложение классификации'>
-        <Row gutter={[16, 16]}>
-          <Col xs={24} md={10}>
-            <div>Категория: {categoryLabel[classify.category] ?? classify.category}</div>
-            <div>Приоритет: {priorityLabel[classify.priority] ?? classify.priority}</div>
-            <Typography.Paragraph>{classify.rationale}</Typography.Paragraph>
-          </Col>
-          <Col xs={24} md={14}>
-            <Form form={aiForm} onFinish={applyAi} layout='inline'>
-              <Form.Item name='category' label='Категория'><Select style={{ width: 160 }} allowClear options={['GENERAL','INCIDENT','ACCESS','BILLING'].map((value) => ({ value, label: categoryLabel[value as keyof typeof categoryLabel] }))} /></Form.Item>
-              <Form.Item name='priority' label='Приоритет'><Select style={{ width: 160 }} allowClear options={['LOW','MEDIUM','HIGH','URGENT'].map((value) => ({ value, label: priorityLabel[value as keyof typeof priorityLabel] }))} /></Form.Item>
-              <Button htmlType='submit' type='primary'>Принять</Button>
-            </Form>
-          </Col>
-        </Row>
-        <ExplainabilityBlock explainability={classify.explainability} />
-      </Card>}
-      {recommend && <Card size='small' title='Последняя сгенерированная рекомендация'>
-        <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>{prettyAiText(recommend.recommendation)}</Typography.Paragraph>
-        {!!recommend.steps?.length && <><Divider /><Typography.Text strong>Первые действия из источников</Typography.Text><ol>{recommend.steps.map((step, index) => <li key={index}>{step}</li>)}</ol></>}
-        <ExplainabilityBlock explainability={recommend.explainability} />
-      </Card>}
-    </Space>}
-  </Card>;
-
-  const sourcesTab = <Card title='Источники для рекомендации'>
-    <Space direction='vertical' size={16} style={{ width: '100%' }}>
-      <Space wrap>
-        <Button onClick={loadSources} loading={aiLoading === 'sources'}>Обновить источники RAG</Button>
-        <Button type='primary' onClick={saveAiRecommendation} loading={aiLoading === 'recommend'} disabled={!canOperate}>Сгенерировать рекомендацию</Button>
-      </Space>
-      {similar ? <>{renderSources()}<ExplainabilityBlock explainability={similar.explainability} /></> : <Alert showIcon type='info' message='Источники ещё не загружены. Нажмите «Обновить источники RAG».' />}
-    </Space>
-  </Card>;
-
-  const recommendationsTab = <Card title='Сохранённые AI-рекомендации'>
+  const recommendationsTab = <Card title='История рекомендаций'>
     <List dataSource={savedRecommendations} locale={{ emptyText: 'Нет сохранённых рекомендаций' }} renderItem={
       (item) => <SavedRecommendationItem item={item} ticketId={ticketId} onUpdated={(updated) => setSavedRecommendations(savedRecommendations.map((r) => r.id === item.id ? updated : r))} />
     } />
   </Card>;
 
+  const aiDrawer = <Drawer title={<Space><RobotOutlined />AI-помощник решения</Space>} width={760} open={aiDrawerOpen} onClose={() => setAiDrawerOpen(false)}>
+    {!canOperate ? <Alert type='info' showIcon message='AI-помощник доступен оператору и администратору.' /> : <Space direction='vertical' size={16} style={{ width: '100%' }}>
+      <Alert showIcon type='info' message='AI подберёт похожие решения и подготовит черновик. Черновик не сохраняется автоматически: сначала проверьте источники и формат.' />
+
+      <Card title='1. Источники' extra={<Button onClick={loadSources} loading={aiLoading === 'sources'}>Найти похожие решения</Button>}>
+        {similar ? <Space direction='vertical' size={12} style={{ width: '100%' }}>
+          <Space style={{ width: '100%', justifyContent: 'space-between' }} align='center'>
+            <div>
+              <Typography.Text strong>{sourceQualityMessage}</Typography.Text>
+              <div><Typography.Text type='secondary'>Выбрано источников: {sourceQuality.selected.length} из {sourceItems.length}. Лучшее совпадение: {sourceQuality.best || 0}%.</Typography.Text></div>
+            </div>
+            <Progress type='circle' size={72} percent={sourceQuality.score} status={sourceQualityType} />
+          </Space>
+          <Space wrap>
+            <Button size='small' onClick={() => setSelectedSourceKeys(sourceItems.map((source) => source.key))}>Выбрать все</Button>
+            <Button size='small' onClick={() => setSelectedSourceKeys(sourceItems.filter((source) => source.fit >= 70).map((source) => source.key))}>Только сильные</Button>
+            <Button size='small' onClick={() => setSelectedSourceKeys([])}>Снять выбор</Button>
+          </Space>
+          {sourceItems.length ? <Space direction='vertical' size={8} style={{ width: '100%' }}>{sourceItems.map(renderSourceCard)}</Space> : <Empty description='Источники не найдены' />}
+          <ExplainabilityBlock explainability={similar.explainability} />
+        </Space> : <Empty description='Нажмите «Найти похожие решения», чтобы увидеть статьи и похожие обращения перед генерацией.' />}
+      </Card>
+
+      <Card title='2. Формат черновика'>
+        <Radio.Group value={selectedMode} onChange={(event) => setSelectedMode(event.target.value)} className='ai-mode-grid'>
+          {recommendationModes.map((mode) => <Radio.Button key={mode.value} value={mode.value} className='ai-mode-option'>
+            <Typography.Text strong>{mode.label}</Typography.Text>
+            <Typography.Text type='secondary'>{mode.description}</Typography.Text>
+          </Radio.Button>)}
+        </Radio.Group>
+      </Card>
+
+      <Card title='3. Черновик рекомендации' extra={<Space wrap><Button onClick={generateDraft} loading={aiLoading === 'recommend'} type='primary'>{draft ? 'Перегенерировать' : 'Сгенерировать черновик'}</Button><Button onClick={saveDraft} loading={aiLoading === 'saveDraft'} disabled={!draftText.trim()}>Сохранить</Button></Space>}>
+        {draft ? <Space direction='vertical' size={12} style={{ width: '100%' }}>
+          <Alert showIcon type='success' message='Черновик готов' description='Отредактируйте текст вручную или используйте быстрые улучшения. В историю попадёт только текст из редактора.' />
+          <Input.TextArea value={draftText} onChange={(event) => setDraftText(event.target.value)} rows={10} showCount maxLength={8000} />
+          <Space wrap>
+            <Button onClick={() => rewriteDraft('SHORTEN')} loading={aiLoading === 'rewrite-SHORTEN'} disabled={!draftText.trim()}>Сократить</Button>
+            <Button onClick={() => rewriteDraft('POLITE')} loading={aiLoading === 'rewrite-POLITE'} disabled={!draftText.trim()}>Сделать более вежливо</Button>
+            <Button onClick={() => rewriteDraft('TECHNICAL_DETAIL')} loading={aiLoading === 'rewrite-TECHNICAL_DETAIL'} disabled={!draftText.trim()}>Сделать технически подробнее</Button>
+            <Button onClick={insertDraftAsInternalComment} loading={aiLoading === 'commentDraft'} disabled={!draftText.trim()}>Вставить в комментарий</Button>
+          </Space>
+          <Collapse size='small' items={[{ key: 'preview', label: 'Предпросмотр форматирования', children: <div className='ai-output'>{renderFormattedAiText(draftText)}</div> }]} />
+          {!!draft.steps?.length && <Card size='small' title='Первые действия'><ol>{draft.steps.map((step, index) => <li key={index}>{step}</li>)}</ol></Card>}
+          <ExplainabilityBlock explainability={draft.explainability} />
+        </Space> : <Empty description='Выберите формат и сгенерируйте черновик. После генерации его можно будет отредактировать, улучшить и сохранить.' />}
+      </Card>
+    </Space>}
+  </Drawer>;
+
   return <Space direction='vertical' size={16} style={{ width: '100%' }}>
     <Card className='quick-actions-panel'>
-      <Space direction='vertical' size={12} style={{ width: '100%' }}>
-        <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
-          <div>
-            <Typography.Title level={3} style={{ margin: 0 }}>Обращение #{ticket.id}</Typography.Title>
-            <Typography.Text type='secondary'>{ticket.title}</Typography.Text>
+      <Space wrap align='start' style={{ justifyContent: 'space-between', width: '100%' }}>
+        <div>
+          <Typography.Title level={3} style={{ margin: 0 }}>Обращение #{ticket.id}</Typography.Title>
+          <Typography.Text type='secondary'>{ticket.title}</Typography.Text>
+          <div style={{ marginTop: 8 }}>
+            <Space wrap>
+              <Tag color={statusColor[ticket.status]}>{statusLabel[ticket.status] ?? ticket.status}</Tag>
+              {ticket.priority && <Tag color={priorityColor[ticket.priority]}>{priorityLabel[ticket.priority] ?? ticket.priority}</Tag>}
+              {ticket.category && <Tag>{categoryLabel[ticket.category] ?? ticket.category}</Tag>}
+            </Space>
           </div>
-          <Space wrap>
-            <Tag color={statusColor[ticket.status]}>{statusLabel[ticket.status] ?? ticket.status}</Tag>
-            {ticket.priority && <Tag color={priorityColor[ticket.priority]}>{priorityLabel[ticket.priority] ?? ticket.priority}</Tag>}
-            {ticket.category && <Tag>{categoryLabel[ticket.category] ?? ticket.category}</Tag>}
-          </Space>
-        </Space>
-        {canOperate && <Space wrap>
+        </div>
+        {canOperate && <Space wrap style={{ justifyContent: 'flex-end' }}>
           <Button onClick={setInProgress}>В работу</Button>
           <Button onClick={() => setEscalateOpen(true)}>Эскалировать</Button>
           <Button type='primary' onClick={() => setCloseOpen(true)}>Закрыть</Button>
-          <Button onClick={runClassification} loading={aiLoading === 'classify'}>Классификация</Button>
-          <Button onClick={loadSources} loading={aiLoading === 'sources'}>Источники RAG</Button>
-          <Button type='primary' onClick={saveAiRecommendation} loading={aiLoading === 'recommend'}>Сгенерировать рекомендацию</Button>
+          <Badge count={draft ? 'черновик' : 0} offset={[-8, 0]}><Button icon={<RobotOutlined />} onClick={() => setAiDrawerOpen(true)}>AI-помощник</Button></Badge>
         </Space>}
       </Space>
     </Card>
@@ -290,10 +455,10 @@ export function TicketDetailsPage() {
       { key: 'overview', label: 'Обзор', children: overview },
       { key: 'comments', label: `Комментарии (${comments.length})`, children: commentsTab },
       { key: 'history', label: `История (${history.length})`, children: historyTab },
-      { key: 'ai', label: 'ИИ-помощник', children: aiTab },
-      { key: 'sources', label: 'Источники RAG', children: sourcesTab },
       { key: 'recommendations', label: `Рекомендации (${savedRecommendations.length})`, children: recommendationsTab }
     ]} />
+
+    {aiDrawer}
 
     <Modal title='Эскалация обращения' open={escalateOpen} onCancel={() => setEscalateOpen(false)} footer={null}>
       <Form form={escalateForm} layout='vertical' onFinish={submitEscalation}>
@@ -312,22 +477,26 @@ export function TicketDetailsPage() {
 
 function SavedRecommendationItem({ item, ticketId, onUpdated }: { item: SavedAiRecommendation; ticketId: number; onUpdated: (value: SavedAiRecommendation) => void }) {
   const [form] = Form.useForm<FeedbackFormValues>();
+  const statusColorValue = item.accepted === true ? 'green' : item.accepted === false ? 'red' : 'blue';
+  const statusText = item.accepted === true ? 'Принята' : item.accepted === false ? 'Отклонена' : 'Сохранена';
   return <List.Item>
-    <Space direction='vertical' style={{ width: '100%' }}>
-      <Typography.Paragraph ellipsis={{ rows: 4, expandable: true }}>{prettyAiText(item.recommendation)}</Typography.Paragraph>
-      <ExplainabilityBlock explainability={{ mode: item.mode, sources: item.sources, llmStatus: item.llmStatus,
-        rawModelOutput: item.rawModelOutput, fallbackReason: item.fallbackReason }} />
-      <Form form={form} layout='inline' onFinish={async (values) => {
-        const updated = await ticketApi.evaluateAiRecommendation(ticketId, item.id, {
-          accepted: Boolean(values.accepted), usefulnessScore: values.usefulnessScore,
-          feedbackComment: values.feedbackComment });
-        onUpdated(updated);
-      }}>
-        <Form.Item name='accepted' label='Принята' valuePropName='checked'><Switch /></Form.Item>
-        <Form.Item name='usefulnessScore' label='Оценка'><Rate /></Form.Item>
-        <Form.Item name='feedbackComment'><Input placeholder='Комментарий качества' /></Form.Item>
-        <Button htmlType='submit'>Оценить</Button>
-      </Form>
-    </Space>
+    <Card size='small' style={{ width: '100%' }} title={<Space><HistoryOutlined />Рекомендация #{item.id}<Tag color={statusColorValue}>{statusText}</Tag>{item.usefulnessScore && <Tag color='gold'>{item.usefulnessScore}/5</Tag>}</Space>} extra={<Typography.Text type='secondary'>{item.createdAt}</Typography.Text>}>
+      <Space direction='vertical' style={{ width: '100%' }} size={12}>
+        <div className='ai-output'>{renderFormattedAiText(item.recommendation)}</div>
+        <ExplainabilityBlock explainability={{ mode: item.mode, sources: item.sources, llmStatus: item.llmStatus, rawModelOutput: item.rawModelOutput, fallbackReason: item.fallbackReason }} />
+        <Divider style={{ margin: '4px 0' }} />
+        <Form form={form} layout='inline' onFinish={async (values) => {
+          const updated = await ticketApi.evaluateAiRecommendation(ticketId, item.id, {
+            accepted: Boolean(values.accepted), usefulnessScore: values.usefulnessScore,
+            feedbackComment: values.feedbackComment });
+          onUpdated(updated);
+        }}>
+          <Form.Item name='accepted' label='Принята' valuePropName='checked'><Switch /></Form.Item>
+          <Form.Item name='usefulnessScore' label='Оценка'><Rate /></Form.Item>
+          <Form.Item name='feedbackComment'><Input placeholder='Комментарий качества' /></Form.Item>
+          <Button htmlType='submit'><CheckCircleOutlined />Оценить</Button>
+        </Form>
+      </Space>
+    </Card>
   </List.Item>;
 }

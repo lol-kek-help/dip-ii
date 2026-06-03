@@ -14,6 +14,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -32,6 +33,8 @@ public interface TaskRepository extends JpaRepository<TaskEntity, Long>, JpaSpec
     List<TaskEntity> findAllByStatus(Status status);
     //запрос без sql только благодаря названию
     List<TaskEntity> findTop5ByTitleContainingIgnoreCaseOrDescriptionContainingIgnoreCase(String title, String description);
+    Optional<TaskEntity> findFirstByRequester_IdAndTitleAndDescriptionAndCreatedByAndCreatedAtAfterOrderByCreatedAtDesc(
+            Long requesterId, String title, String description, String createdBy, LocalDateTime createdAtAfter);
     @Modifying
     @Query("""
             update TaskEntity t 

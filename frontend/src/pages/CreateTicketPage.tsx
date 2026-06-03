@@ -1,4 +1,4 @@
-import { Button, Card, DatePicker, Form, Input, Select } from 'antd';
+import { Button, Card, DatePicker, Form, Input, Select, message } from 'antd';
 import { Dayjs } from 'dayjs';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -13,6 +13,7 @@ export function CreateTicketPage() {
   const nav = useNavigate();
   const [form] = Form.useForm<CreateTicketFormValues>();
   const [users, setUsers] = useState<User[]>([]);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     userApi.users().then((loadedUsers) => {
@@ -22,15 +23,22 @@ export function CreateTicketPage() {
   }, [form]);
 
   const onFinish = async (values: CreateTicketFormValues) => {
-    const created = await ticketApi.create({
-      title: values.title,
-      description: values.description,
-      requesterId: values.requesterId,
-      category: values.category,
-      priority: values.priority,
-      resolutionDeadline: values.resolutionDeadline?.toISOString()
-    });
-    nav(`/tickets/${created.id}`);
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const created = await ticketApi.create({
+        title: values.title,
+        description: values.description,
+        requesterId: values.requesterId,
+        category: values.category,
+        priority: values.priority,
+        resolutionDeadline: values.resolutionDeadline?.toISOString()
+      });
+      nav(`/tickets/${created.id}`);
+    } catch (error) {
+      message.error('Не удалось создать обращение. Проверьте данные и попробуйте ещё раз.');
+      setSubmitting(false);
+    }
   };
 
   return <Card title='Создание обращения'>
@@ -43,7 +51,7 @@ export function CreateTicketPage() {
       <Form.Item name='category' label='Категория'><Select allowClear options={['GENERAL','INCIDENT','ACCESS','BILLING'].map((value) => ({ value, label: categoryLabel[value as keyof typeof categoryLabel] }))} /></Form.Item>
       <Form.Item name='priority' label='Приоритет'><Select allowClear options={['LOW','MEDIUM','HIGH','URGENT'].map((value) => ({ value, label: priorityLabel[value as keyof typeof priorityLabel] }))} /></Form.Item>
       <Form.Item name='resolutionDeadline' label='Срок решения'><DatePicker showTime style={{ width: '100%' }} /></Form.Item>
-      <Button type='primary' htmlType='submit'>Создать</Button>
+      <Button type='primary' htmlType='submit' loading={submitting} disabled={submitting}>Создать</Button>
     </Form>
   </Card>;
 }

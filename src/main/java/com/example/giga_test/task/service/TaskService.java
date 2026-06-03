@@ -136,6 +136,12 @@ public class TaskService {
             throw new IllegalArgumentException("До дедлайна минимум должен быть 1 день");
         }
 
+        var recentDuplicate = repository.findFirstByRequester_IdAndTitleAndDescriptionAndCreatedByAndCreatedAtAfterOrderByCreatedAtDesc(
+                requester.getId(), request.title(), request.description(), currentUser.getUsername(), now.minusSeconds(10));
+        if (recentDuplicate.isPresent()) {
+            return entityToTask(recentDuplicate.get());
+        }
+
         TaskEntity entityToSave = new TaskEntity();
         entityToSave.setTitle(request.title());
         entityToSave.setDescription(request.description());
@@ -405,6 +411,27 @@ public class TaskService {
         AiRecommendation saved = aiRecommendationRepository.save(entity);
         writeAudit(ticket, "AI_RECOMMENDATION_SAVE", "AI-рекомендация сохранена",
                 null, response.recommendation(), actor);
+        return toAiRecommendationDto(saved);
+    }
+
+    @Transactional
+    public SavedAiRecommendationDto saveAiRecommendationDraft(Long id, SaveAiRecommendationRequest request) {
+        requireOperatorOrAdmin();
+        User actor = currentUser();
+        TaskEntity ticket = getEntity(id);
+        AiRecommendation entity = new AiRecommendation();
+        entity.setTicket(ticket);
+        entity.setRecommendation(request.recommendation());
+        entity.setStepsJson(toJson(request.steps() == null ? List.of() : request.steps()));
+        entity.setMode(request.mode());
+        entity.setSourcesJson(toJson(request.sources() == null ? List.of() : request.sources()));
+        entity.setLlmStatus(request.llmStatus());
+        entity.setRawModelOutput(request.rawModelOutput());
+        entity.setCreatedByUser(actor);
+        entity.setCreatedAt(LocalDateTime.now());
+        AiRecommendation saved = aiRecommendationRepository.save(entity);
+        writeAudit(ticket, "AI_RECOMMENDATION_SAVE_DRAFT", "AI-рекомендация сохранена из черновика",
+                null, request.recommendation(), actor);
         return toAiRecommendationDto(saved);
     }
 

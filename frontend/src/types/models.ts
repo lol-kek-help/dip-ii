@@ -20,6 +20,7 @@ export interface SimilarItem { ticketId: number; title: string; score: number; }
 export interface ResolvedCase { ticketId: number; title: string; fitPercent: number; resolutionComment?: string; }
 export interface KnowledgeArticle { articleId: number; title: string; fitPercent: number; content: string; category: string; }
 export interface SimilarResponse { tickets: SimilarItem[]; resolvedCases: ResolvedCase[]; articles: KnowledgeArticle[]; explainability?: Explainability; }
+export type RecommendationMode = 'SHORT'|'STEP_BY_STEP'|'USER_REPLY'|'INTERNAL_COMMENT'|'TECHNICAL_GUIDE'|'ESCALATION_SUMMARY';
 export interface RecommendResponse { recommendation: string; steps: string[]; explainability?: Explainability; }
 export interface SavedAiRecommendation extends RecommendResponse { id: number; ticketId: number; mode?: string; sources?: string[]; llmStatus?: string; rawModelOutput?: string | null; fallbackReason?: string | null; accepted?: boolean; usefulnessScore?: number; feedbackComment?: string; createdAt: string; evaluatedAt?: string; createdBy?: User; evaluatedBy?: User; }
 export interface AiQualityReport { totalRecommendations: number; evaluatedRecommendations: number; acceptedRecommendations: number; acceptanceRate: number; averageUsefulnessScore: number; classificationChanges: number; classificationChangeRate: number; }
