@@ -1,25 +1,35 @@
-# ER-диаграмма
+# База данных
+
+База данных построена на PostgreSQL и описывает систему обработки заявок, пользователей, SLA, уведомлений, аудита и AI/RAG-рекомендаций.
+
+Актуальная ER-схема с первичными ключами (`PK`), внешними ключами (`FK`), уникальными ограничениями (`UQ`), индексами (`IDX`) и всеми полями таблиц вынесена в отдельный документ: [`docs/ER.md`](ER.md).
+
+## Основные сущности
+
+- `users` — пользователи системы и их роли.
+- `tasks` — заявки/инциденты, созданные пользователями и назначенные исполнителям.
+- `ticket_comments`, `ticket_attachments`, `ticket_status_history` — комментарии, вложения и история статусов заявок.
+- `sla_policies`, `sla_records` — политики и фактические метрики SLA.
+- `knowledge_base_articles`, `vector_records`, `ai_recommendations` — база знаний, векторный индекс и рекомендации ИИ.
+- `refresh_tokens`, `notifications`, `audit_logs` — авторизация, уведомления и журнал аудита.
+
+## Ключевые связи
+
 ```mermaid
 erDiagram
+    USERS ||--o{ TASKS : creates
+    USERS ||--o{ TASKS : assigned_to
+    USERS ||--o{ REFRESH_TOKENS : owns
+    USERS ||--o{ NOTIFICATIONS : receives
+    USERS ||--o{ AUDIT_LOGS : performs
 
-  ROLES ||--o{ USERS : has
-  USERS ||--o{ TICKETS : creates
-  USERS ||--o{ TICKETS : assigned_to
-  USERS ||--o{ MESSAGES : sends
-  USERS ||--o{ AUDIT_LOGS : performs
+    TASKS ||--o{ TICKET_COMMENTS : contains
+    TASKS ||--o{ TICKET_ATTACHMENTS : includes
+    TASKS ||--o{ TICKET_STATUS_HISTORY : changes
+    TASKS ||--|| SLA_RECORDS : has
+    TASKS ||--o{ AI_RECOMMENDATIONS : receives
 
-  STATUSES ||--o{ TICKETS : defines
-  PRIORITIES ||--o{ TICKETS : sets
-  CATEGORIES ||--o{ TICKETS : classifies
-
-  TICKETS ||--o{ MESSAGES : contains
-  TICKETS ||--o{ ATTACHMENTS : includes
-  TICKETS ||--|| SLA_METRICS : has
-  TICKETS ||--o{ SLA_VIOLATIONS : generates
-
-  PRIORITIES ||--o{ SLA_POLICY : regulates
-  SLA_POLICY ||--o{ SLA_METRICS : applies
-
+    SLA_POLICIES ||--o{ SLA_RECORDS : applies
 ```
 
-Нормализация до 3НФ соблюдена: пользовательские данные, категории и сообщения вынесены в отдельные сущности.
+Нормализация поддерживается разделением пользовательских данных, заявок, комментариев, вложений, SLA-метрик, уведомлений, аудита и AI/RAG-данных по отдельным сущностям.
