@@ -6,6 +6,7 @@ import java.util.List;
 
 public class AiDtos {
     public record AiRequest(@NotBlank String text, String mode, List<String> sourceHints) {}
+    public record RewriteRequest(@NotBlank String text, @NotBlank String action, String context) {}
 
     public record Explainability(String mode, List<String> sources, String llmStatus, String rawModelOutput, String fallbackReason) {}
 

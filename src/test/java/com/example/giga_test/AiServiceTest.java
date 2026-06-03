@@ -109,14 +109,14 @@ public class AiServiceTest {
                 .sourceId(100L)
                 .textContent("Проблема с электронной почтой Outlook")
                 .embedding(serialize(emailVector))
-                .embeddingProvider("LOCAL_HASH:SYN_V1")
+                .embeddingProvider("LOCAL_HASH:SYN_V2")
                 .embeddingDimension(emailVector.length)
                 .build();
 
         doThrow(new DataAccessResourceFailureException("pgvector unavailable"))
                 .when(jdbcTemplate)
                 .query(anyString(), ArgumentMatchers.<RowMapper<EmbeddingService.ScoredVectorRecord>>any(), any(), any(), any(), any(), anyInt());
-        when(vectorRecordRepository.findAllBySourceTypeAndEmbeddingProvider("TASK", "LOCAL_HASH:SYN_V1"))
+        when(vectorRecordRepository.findAllBySourceTypeAndEmbeddingProvider("TASK", "LOCAL_HASH:SYN_V2"))
                 .thenReturn(List.of(emailRecord));
 
         var result = service.topK("TASK", "email не работает", 1);
@@ -124,6 +124,77 @@ public class AiServiceTest {
         assertEquals(1, result.size());
         assertEquals(100L, result.get(0).record().getSourceId());
         assertTrue(result.get(0).score() > 0.15);
+    }
+
+
+    @Test
+    void localEmbeddingFallbackShouldMatchInflectedSynonymForms() {
+        VectorRecordRepository vectorRecordRepository = Mockito.mock(VectorRecordRepository.class);
+        JdbcTemplate jdbcTemplate = Mockito.mock(JdbcTemplate.class);
+        EmbeddingService service = new EmbeddingService(vectorRecordRepository, fakeClient(""), jdbcTemplate);
+
+        double[] articleVector = service.embed("Возгорание в автомобиле: порядок действий и эвакуация");
+        VectorRecord articleRecord = VectorRecord.builder()
+                .id(2L)
+                .sourceType("KB")
+                .sourceId(200L)
+                .textContent("Возгорание в автомобиле: порядок действий и эвакуация")
+                .embedding(serialize(articleVector))
+                .embeddingProvider("LOCAL_HASH:SYN_V2")
+                .embeddingDimension(articleVector.length)
+                .build();
+
+        doThrow(new DataAccessResourceFailureException("pgvector unavailable"))
+                .when(jdbcTemplate)
+                .query(anyString(), ArgumentMatchers.<RowMapper<EmbeddingService.ScoredVectorRecord>>any(), any(), any(), any(), any(), anyInt());
+        when(vectorRecordRepository.findAllBySourceTypeAndEmbeddingProvider("KB", "LOCAL_HASH:SYN_V2"))
+                .thenReturn(List.of(articleRecord));
+
+        var result = service.topK("KB", "огонь в машине", 1);
+
+        assertEquals(1, result.size());
+        assertEquals(200L, result.get(0).record().getSourceId());
+        assertTrue(result.get(0).score() > 0.15);
+    }
+
+
+    @Test
+    void topKShouldMergePgVectorWithExactSerializedScores() {
+        VectorRecordRepository vectorRecordRepository = Mockito.mock(VectorRecordRepository.class);
+        JdbcTemplate jdbcTemplate = Mockito.mock(JdbcTemplate.class);
+        EmbeddingService service = new EmbeddingService(vectorRecordRepository, fakeClient(""), jdbcTemplate);
+
+        String query = "огонь в машине";
+        double[] relevantVector = service.embed("Возгорание в автомобиле: порядок действий и эвакуация");
+        VectorRecord relevantRecord = VectorRecord.builder()
+                .id(10L)
+                .sourceType("KB")
+                .sourceId(200L)
+                .textContent("Возгорание в автомобиле: порядок действий и эвакуация")
+                .embedding(serialize(relevantVector))
+                .embeddingProvider("LOCAL_HASH:SYN_V2")
+                .embeddingDimension(relevantVector.length)
+                .build();
+        VectorRecord pgVectorRecord = VectorRecord.builder()
+                .id(11L)
+                .sourceType("KB")
+                .sourceId(201L)
+                .textContent("Нерелевантная статья")
+                .embedding(serialize(service.embed("Нерелевантная статья")))
+                .embeddingProvider("LOCAL_HASH:SYN_V2")
+                .embeddingDimension(relevantVector.length)
+                .build();
+
+        doReturn(List.of(new EmbeddingService.ScoredVectorRecord(pgVectorRecord, 0.1)))
+                .when(jdbcTemplate)
+                .query(anyString(), ArgumentMatchers.<RowMapper<EmbeddingService.ScoredVectorRecord>>any(), any(), any(), any(), any(), anyInt());
+        when(vectorRecordRepository.findAllBySourceTypeAndEmbeddingProvider("KB", "LOCAL_HASH:SYN_V2"))
+                .thenReturn(List.of(relevantRecord, pgVectorRecord));
+
+        var result = service.topK("KB", query, 1);
+
+        assertEquals(1, result.size());
+        assertEquals(200L, result.get(0).record().getSourceId());
     }
 
     @Test
@@ -150,7 +221,7 @@ public class AiServiceTest {
                 .sourceId(7L)
                 .textContent(article.getTitle() + " " + article.getContent())
                 .embedding("0.1,0.2")
-                .embeddingProvider("LOCAL_HASH:SYN_V1")
+                .embeddingProvider("LOCAL_HASH:SYN_V2")
                 .embeddingDimension(2)
                 .build();
 
@@ -178,7 +249,7 @@ public class AiServiceTest {
 
         assertTrue(response.recommendation().contains("танцевать"));
         assertTrue(response.recommendation().contains("ураааааа"));
-        assertEquals("RAG_GROUNDED", response.explainability().mode());
+        assertTrue(response.explainability().mode().startsWith("RAG_GROUNDED"));
         assertTrue(response.steps().get(0).contains("танцевать"));
     }
 

@@ -136,6 +136,12 @@ public class TaskService {
             throw new IllegalArgumentException("До дедлайна минимум должен быть 1 день");
         }
 
+        var recentDuplicate = repository.findFirstByRequester_IdAndTitleAndDescriptionAndCreatedByAndCreatedAtAfterOrderByCreatedAtDesc(
+                requester.getId(), request.title(), request.description(), currentUser.getUsername(), now.minusSeconds(10));
+        if (recentDuplicate.isPresent()) {
+            return entityToTask(recentDuplicate.get());
+        }
+
         TaskEntity entityToSave = new TaskEntity();
         entityToSave.setTitle(request.title());
         entityToSave.setDescription(request.description());

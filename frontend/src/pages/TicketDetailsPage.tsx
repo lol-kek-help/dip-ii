@@ -22,6 +22,12 @@ function prettyAiText(raw?: string) {
   return raw.replace(/\r/g, '').replace(/---/g, '\n').replace(/\*\*(.*?)\*\*/g, '$1').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+
+function clampPercent(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 function renderFormattedAiText(raw?: string) {
   const text = prettyAiText(raw);
   if (!text) return <Empty description='Черновик пока не сгенерирован' />;
@@ -79,6 +85,7 @@ export function TicketDetailsPage() {
   const [classify, setClassify] = useState<ClassifyResponse>();
   const [similar, setSimilar] = useState<SimilarResponse>();
   const [draft, setDraft] = useState<RecommendResponse>();
+  const [draftText, setDraftText] = useState('');
   const [selectedMode, setSelectedMode] = useState<RecommendationMode>('STEP_BY_STEP');
   const [selectedSourceKeys, setSelectedSourceKeys] = useState<string[]>([]);
   const [savedRecommendations, setSavedRecommendations] = useState<SavedAiRecommendation[]>([]);
@@ -100,7 +107,7 @@ export function TicketDetailsPage() {
       key: `article-${article.articleId}`,
       type: 'article' as const,
       title: article.title,
-      fit: article.fitPercent,
+      fit: clampPercent(article.fitPercent),
       description: article.content,
       meta: `Статья БЗ · ${article.category}`,
       color: 'blue'
@@ -109,7 +116,7 @@ export function TicketDetailsPage() {
       key: `case-${item.ticketId}`,
       type: 'case' as const,
       title: `#${item.ticketId} ${item.title}`,
-      fit: item.fitPercent,
+      fit: clampPercent(item.fitPercent),
       description: item.resolutionComment || 'Решение не заполнено',
       meta: 'Решённое обращение',
       color: 'green'
@@ -118,7 +125,7 @@ export function TicketDetailsPage() {
       key: `ticket-${item.ticketId}`,
       type: 'ticket' as const,
       title: `#${item.ticketId} ${item.title}`,
-      fit: Math.round(item.score * 100),
+      fit: clampPercent(item.score * 100),
       description: 'Похожее обращение без готового решения. Используйте как сигнал для сравнения симптомов.',
       meta: 'Похожее обращение',
       color: 'purple'
@@ -174,9 +181,9 @@ export function TicketDetailsPage() {
       const result = await aiApi.similar(text);
       setSimilar(result);
       const nextItems = [
-        ...(result.articles ?? []).map((article) => ({ key: `article-${article.articleId}`, fit: article.fitPercent })),
-        ...(result.resolvedCases ?? []).map((item) => ({ key: `case-${item.ticketId}`, fit: item.fitPercent })),
-        ...(result.tickets ?? []).map((item) => ({ key: `ticket-${item.ticketId}`, fit: Math.round(item.score * 100) }))
+        ...(result.articles ?? []).map((article) => ({ key: `article-${article.articleId}`, fit: clampPercent(article.fitPercent) })),
+        ...(result.resolvedCases ?? []).map((item) => ({ key: `case-${item.ticketId}`, fit: clampPercent(item.fitPercent) })),
+        ...(result.tickets ?? []).map((item) => ({ key: `ticket-${item.ticketId}`, fit: clampPercent(item.score * 100) }))
       ];
       setSelectedSourceKeys(nextItems.filter((source) => source.fit >= 50).map((source) => source.key));
       message.success('Источники подобраны. Проверьте их перед генерацией черновика.');
@@ -193,18 +200,19 @@ export function TicketDetailsPage() {
       }
       const result = await aiApi.recommend(text, selectedMode, selectedSourceHints);
       setDraft(result);
-      message.success('Черновик готов. Он не сохранён — сохраните его вручную, если вариант подходит.');
+      setDraftText(result.recommendation);
+      message.success('Черновик готов. Его можно отредактировать перед сохранением.');
     } finally {
       setAiLoading(undefined);
     }
   };
 
   const saveDraft = async () => {
-    if (!draft) return;
+    if (!draft || !draftText.trim()) return;
     setAiLoading('saveDraft');
     try {
       const saved = await ticketApi.saveAiRecommendationDraft(ticketId, {
-        recommendation: draft.recommendation,
+        recommendation: draftText.trim(),
         steps: draft.steps ?? [],
         mode: draft.explainability?.mode ?? selectedMode,
         sources: sourceQuality.selected.length ? sourceQuality.selected.map((source) => `${source.meta}: ${source.title}`) : (draft.explainability?.sources ?? []),
@@ -213,6 +221,36 @@ export function TicketDetailsPage() {
       });
       setSavedRecommendations([saved, ...savedRecommendations]);
       message.success('Черновик сохранён в историю рекомендаций.');
+    } finally {
+      setAiLoading(undefined);
+    }
+  };
+
+
+  const rewriteDraft = async (action: 'SHORTEN'|'POLITE'|'TECHNICAL_DETAIL') => {
+    if (!draftText.trim()) return;
+    setAiLoading(`rewrite-${action}`);
+    try {
+      const result = await aiApi.rewriteRecommendation(draftText.trim(), action, text);
+      setDraft({
+        recommendation: result.recommendation,
+        steps: result.steps?.length ? result.steps : (draft?.steps ?? []),
+        explainability: result.explainability
+      });
+      setDraftText(result.recommendation);
+      message.success('Черновик обновлён. Проверьте текст перед сохранением.');
+    } finally {
+      setAiLoading(undefined);
+    }
+  };
+
+  const insertDraftAsInternalComment = async () => {
+    if (!draftText.trim()) return;
+    setAiLoading('commentDraft');
+    try {
+      await ticketApi.addComment(ticketId, { commentText: draftText.trim(), internalComment: true });
+      setComments(await ticketApi.comments(ticketId));
+      message.success('Черновик добавлен как внутренний комментарий.');
     } finally {
       setAiLoading(undefined);
     }
@@ -372,37 +410,43 @@ export function TicketDetailsPage() {
         </Radio.Group>
       </Card>
 
-      <Card title='3. Черновик рекомендации' extra={<Space><Button onClick={generateDraft} loading={aiLoading === 'recommend'} type='primary'>Сгенерировать черновик</Button><Button onClick={saveDraft} loading={aiLoading === 'saveDraft'} disabled={!draft}>Сохранить</Button></Space>}>
+      <Card title='3. Черновик рекомендации' extra={<Space wrap><Button onClick={generateDraft} loading={aiLoading === 'recommend'} type='primary'>{draft ? 'Перегенерировать' : 'Сгенерировать черновик'}</Button><Button onClick={saveDraft} loading={aiLoading === 'saveDraft'} disabled={!draftText.trim()}>Сохранить</Button></Space>}>
         {draft ? <Space direction='vertical' size={12} style={{ width: '100%' }}>
-          <Alert showIcon type='success' message='Черновик готов' description='Он может отличаться при следующей генерации и не попадёт в историю, пока вы не нажмёте «Сохранить».' />
-          <div className='ai-output'>{renderFormattedAiText(draft.recommendation)}</div>
+          <Alert showIcon type='success' message='Черновик готов' description='Отредактируйте текст вручную или используйте быстрые улучшения. В историю попадёт только текст из редактора.' />
+          <Input.TextArea value={draftText} onChange={(event) => setDraftText(event.target.value)} rows={10} showCount maxLength={8000} />
+          <Space wrap>
+            <Button onClick={() => rewriteDraft('SHORTEN')} loading={aiLoading === 'rewrite-SHORTEN'} disabled={!draftText.trim()}>Сократить</Button>
+            <Button onClick={() => rewriteDraft('POLITE')} loading={aiLoading === 'rewrite-POLITE'} disabled={!draftText.trim()}>Сделать более вежливо</Button>
+            <Button onClick={() => rewriteDraft('TECHNICAL_DETAIL')} loading={aiLoading === 'rewrite-TECHNICAL_DETAIL'} disabled={!draftText.trim()}>Сделать технически подробнее</Button>
+            <Button onClick={insertDraftAsInternalComment} loading={aiLoading === 'commentDraft'} disabled={!draftText.trim()}>Вставить в комментарий</Button>
+          </Space>
+          <Collapse size='small' items={[{ key: 'preview', label: 'Предпросмотр форматирования', children: <div className='ai-output'>{renderFormattedAiText(draftText)}</div> }]} />
           {!!draft.steps?.length && <Card size='small' title='Первые действия'><ol>{draft.steps.map((step, index) => <li key={index}>{step}</li>)}</ol></Card>}
           <ExplainabilityBlock explainability={draft.explainability} />
-        </Space> : <Empty description='Выберите формат и сгенерируйте черновик. Редактирования нет — если вариант не подходит, сгенерируйте новый.' />}
+        </Space> : <Empty description='Выберите формат и сгенерируйте черновик. После генерации его можно будет отредактировать, улучшить и сохранить.' />}
       </Card>
     </Space>}
   </Drawer>;
 
   return <Space direction='vertical' size={16} style={{ width: '100%' }}>
     <Card className='quick-actions-panel'>
-      <Space direction='vertical' size={12} style={{ width: '100%' }}>
-        <Space wrap style={{ justifyContent: 'space-between', width: '100%' }}>
-          <div>
-            <Typography.Title level={3} style={{ margin: 0 }}>Обращение #{ticket.id}</Typography.Title>
-            <Typography.Text type='secondary'>{ticket.title}</Typography.Text>
+      <Space wrap align='start' style={{ justifyContent: 'space-between', width: '100%' }}>
+        <div>
+          <Typography.Title level={3} style={{ margin: 0 }}>Обращение #{ticket.id}</Typography.Title>
+          <Typography.Text type='secondary'>{ticket.title}</Typography.Text>
+          <div style={{ marginTop: 8 }}>
+            <Space wrap>
+              <Tag color={statusColor[ticket.status]}>{statusLabel[ticket.status] ?? ticket.status}</Tag>
+              {ticket.priority && <Tag color={priorityColor[ticket.priority]}>{priorityLabel[ticket.priority] ?? ticket.priority}</Tag>}
+              {ticket.category && <Tag>{categoryLabel[ticket.category] ?? ticket.category}</Tag>}
+            </Space>
           </div>
-          <Space wrap>
-            <Tag color={statusColor[ticket.status]}>{statusLabel[ticket.status] ?? ticket.status}</Tag>
-            {ticket.priority && <Tag color={priorityColor[ticket.priority]}>{priorityLabel[ticket.priority] ?? ticket.priority}</Tag>}
-            {ticket.category && <Tag>{categoryLabel[ticket.category] ?? ticket.category}</Tag>}
-          </Space>
-        </Space>
-        {canOperate && <Space wrap>
+        </div>
+        {canOperate && <Space wrap style={{ justifyContent: 'flex-end' }}>
           <Button onClick={setInProgress}>В работу</Button>
           <Button onClick={() => setEscalateOpen(true)}>Эскалировать</Button>
           <Button type='primary' onClick={() => setCloseOpen(true)}>Закрыть</Button>
-          <Button onClick={runClassification} loading={aiLoading === 'classify'}>Проверить классификацию AI</Button>
-          <Badge count={draft ? 'черновик' : 0} offset={[-8, 0]}><Button type='primary' icon={<RobotOutlined />} onClick={() => setAiDrawerOpen(true)}>Открыть AI-помощник</Button></Badge>
+          <Badge count={draft ? 'черновик' : 0} offset={[-8, 0]}><Button icon={<RobotOutlined />} onClick={() => setAiDrawerOpen(true)}>AI-помощник</Button></Badge>
         </Space>}
       </Space>
     </Card>
